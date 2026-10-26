@@ -169,7 +169,7 @@ a.btn-ghost,a.brand{color:var(--text);text-decoration:none}
 .run-head{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;color:var(--muted)}.run-head b{color:var(--text)}
 .run ul{list-style:none;margin:6px 0 0;padding:0;font-size:13px}.run li{padding:4px 0;border-top:1px solid var(--line)}
 .run li .side{font-weight:800;margin-right:6px}.run li .why{color:var(--muted);display:block;font-size:12.5px}
-@media (max-width:900px){.ap-layout{grid-template-columns:minmax(0,1fr)}.ap-side{position:static}.ap-title .lock{display:none}}
+@media (max-width:900px){.ap-layout{grid-template-columns:minmax(0,1fr)}.ap-side{position:static;order:-1}.ap-title .lock{display:none}}
 @media (max-width:560px){.ap-title{font-size:13px}.brand span{display:none}.ap-top-actions a{display:none}}
 @media (max-width:560px){.ap-main{padding:12px}.ap-hero .avatar{display:none}.ap-main .pf-summary{grid-template-columns:1fr 1fr}}
 /* ---------- accounts ---------- */
@@ -197,3 +197,8 @@ a.btn-ghost,a.brand{color:var(--text);text-decoration:none}
 .pl-line[data-off=above],.pl-line[data-off=below]{border-top-color:transparent}
 .pl-line[data-off=above] .pl-val::before{content:"▲ "}
 .pl-line[data-off=below] .pl-val::before{content:"▼ "}
+.ap-cash{margin:0 0 4px;font-size:13px}.ap-cash b{color:var(--text)}
+.ap-quick{display:grid;grid-template-columns:repeat(auto-fit,minmax(0,1fr));gap:6px;margin:0 0 8px}
+.ap-quick button{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:6px 0;font-size:12px;font-weight:600}
+.ap-quick button:hover{border-color:var(--accent)}
+#ap-money[hidden],#ap-setup[hidden]{display:none}

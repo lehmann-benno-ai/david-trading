@@ -1,4 +1,4 @@
-/* David Autopilot (owner only): David manages a separate demo fund funded from the demo broker's cash. */
+/* David Autopilot (any logged-in account): David manages a separate demo fund funded from the demo broker's cash. */
 const $ = (id) => document.getElementById(id);
 const MAIN_KEY = "davidDemoBroker", AP_KEY = "davidAutopilot", RUN_EVERY = 30 * 60 * 1000;
 const usd = (n) => n == null || isNaN(n) ? "—" : (n < 0 ? "-$" : "$") + Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -62,18 +62,38 @@ function moveMoney(amount, toDavid) {
     if (amount > ap.cash + 0.005) throw new Error(`David's fund only has ${usd(ap.cash)} in cash. Sell positions first.`);
     ap.cash -= amount; ap.funded = Math.max(0, ap.funded - amount); main.cash += amount;
   }
+  ap.snapshots.push({ t: Date.now(), v: totals().total });
   localStorage.setItem(MAIN_KEY, JSON.stringify(main));
   localStorage.setItem(AP_KEY, JSON.stringify(ap));
   pushState({ broker: main, autopilot: ap });
 }
+/* accepts "5000", "5,000", "5.000", "$5,000.50", "5000,50" */
+function parseAmount(v) {
+  v = String(v).replace(/[$€\s]/g, "");
+  if (/^\d{1,3}([.,]\d{3})+$/.test(v)) v = v.replace(/[.,]/g, "");
+  else if (/^\d{1,3}(,\d{3})+\.\d+$/.test(v)) v = v.replace(/,/g, "");
+  else if (/^\d{1,3}(\.\d{3})+,\d+$/.test(v)) v = v.replace(/\./g, "").replace(",", ".");
+  else v = v.replace(",", ".");
+  return /^\d*\.?\d+$/.test(v) ? Number(v) : NaN;
+}
+$("ap-quick").addEventListener("click", (e) => {
+  const b = e.target.closest("button"), main = load(MAIN_KEY); if (!b || !main) return;
+  $("ap-amount").value = (Math.floor(main.cash * Number(b.dataset.frac) * 100) / 100).toFixed(2); showErr();
+});
+$("ap-setup").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  const amt = Number(b.dataset.start), main = { startCash: amt, cash: amt, positions: {}, history: [], createdAt: Date.now() };
+  localStorage.setItem(MAIN_KEY, JSON.stringify(main)); pushState({ broker: main });
+  toast(`Demo account opened with ${usd(amt)} play money`); render();
+});
 $("ap-give").addEventListener("click", () => {
   showErr();
-  try { const a = Number($("ap-amount").value); moveMoney(a, true); toast(`Gave ${usd(a)} demo money to David`); $("ap-amount").value = ""; refreshQuotes(); if (ap.auto) runDavid(); }
+  try { const a = parseAmount($("ap-amount").value); moveMoney(a, true); toast(`Gave ${usd(a)} demo money to David`); $("ap-amount").value = ""; refreshQuotes(); if (ap.auto) runDavid(); }
   catch (e) { showErr(e.message); }
 });
 $("ap-take").addEventListener("click", () => {
   showErr();
-  try { const a = Number($("ap-amount").value); moveMoney(a, false); toast(`Moved ${usd(a)} back to your demo account`); $("ap-amount").value = ""; render(); }
+  try { const a = parseAmount($("ap-amount").value); moveMoney(a, false); toast(`Moved ${usd(a)} back to your demo account`); $("ap-amount").value = ""; render(); }
   catch (e) { showErr(e.message); }
 });
 $("ap-close").addEventListener("click", async () => {
@@ -162,7 +182,8 @@ function render() {
     ["Invested", usd(t.invested)],
     ["Money given to David", usd(ap.funded)],
   ].map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
-  $("ap-main-cash").textContent = main ? `Cash in your demo account: ${usd(main.cash)}` : "No demo account yet. Open one on the Markets page first.";
+  $("ap-main-cash").innerHTML = main ? `Cash in your demo account: <b>${usd(main.cash)}</b>` : "";
+  $("ap-setup").hidden = !!main; $("ap-money").hidden = !main;
 
   const pts = []; let lastT = 0;
   for (const s of ap.snapshots) { const tt = Math.floor(s.t / 1000); if (tt > lastT) { pts.push({ time: tt, value: s.v }); lastT = tt; } }

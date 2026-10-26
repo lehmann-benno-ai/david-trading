@@ -28,7 +28,20 @@
     <div class="ap-log" id="ap-log"></div>
   </section>
   <aside class="panel ap-side">
-    <h4>Autopilot</h4>
+    <h4>1 · Give David demo money</h4>
+    <p class="ap-cash" id="ap-main-cash"></p>
+    <div id="ap-setup" class="ap-setup" hidden>
+      <p class="muted">You need a demo account first. Pick your play money:</p>
+      <div class="ap-quick"><button data-start="10000">$10K</button><button data-start="100000">$100K</button><button data-start="1000000">$1M</button></div>
+    </div>
+    <div id="ap-money">
+      <label class="field">Amount (USD)<input id="ap-amount" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 5000"></label>
+      <div class="ap-quick" id="ap-quick"><button data-frac="0.1">10%</button><button data-frac="0.25">25%</button><button data-frac="0.5">50%</button><button data-frac="1">All</button></div>
+      <div class="ap-money-btns"><button class="btn-buy" id="ap-give">Give to David</button><button class="btn-ghost" id="ap-take">Take back cash</button></div>
+      <button class="btn-ghost danger wide" id="ap-close">Sell everything &amp; return all money</button>
+    </div>
+    <p class="order-err" id="ap-err" role="alert"></p>
+    <h4>2 · Let David trade</h4>
     <label class="switch"><input type="checkbox" id="ap-auto"><span class="slider"></span><span id="ap-auto-label">Off</span></label>
     <p class="muted" id="ap-next"></p>
     <button class="btn-primary wide" id="ap-run">Let David invest now</button>
@@ -38,12 +51,6 @@
       <button data-risk="balanced"><b>Balanced</b><small>Max 8 stocks, keeps 10% cash</small></button>
       <button data-risk="aggressive"><b>Bold</b><small>Max 10 stocks, almost fully invested</small></button>
     </div>
-    <h4>Money</h4>
-    <p class="muted" id="ap-main-cash"></p>
-    <label class="field">Amount (USD)<input id="ap-amount" type="number" min="1" step="any" placeholder="e.g. 5000"></label>
-    <div class="ap-money-btns"><button class="btn-buy" id="ap-give">Give to David</button><button class="btn-ghost" id="ap-take">Take back cash</button></div>
-    <button class="btn-ghost danger wide" id="ap-close">Sell everything &amp; return all money</button>
-    <p class="order-err" id="ap-err" role="alert"></p>
     <p class="disclaimer">Play money only. David uses technical signals on historical prices, so this is a simulation, not financial advice.</p>
   </aside>
 </main>
