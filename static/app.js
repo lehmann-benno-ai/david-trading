@@ -147,7 +147,7 @@ $("t-sma200").addEventListener("change", (e) => sma200S.applyOptions({ visible: 
 function verdictClass(v) { return v.includes("BUY") ? "b-buy" : v.includes("SELL") ? "b-sell" : "b-hold"; }
 
 function renderVerdict(a) {
-  const pos = Math.max(0, Math.min(100, (a.score + 8) / 16 * 100));
+  const pos = Math.max(0, Math.min(100, (a.score + 4) / 8 * 100));
   const s = a.stats;
   $("verdict").innerHTML = `<div class="vcard">
     <div class="vtop"><div><div class="muted">David's verdict · ${esc(label(a.symbol))}</div><strong>${esc(a.name)}</strong></div><span class="badge ${verdictClass(a.verdict)}">${a.verdict}</span></div>
@@ -160,8 +160,31 @@ function renderVerdict(a) {
     </div>
     <ul class="reasons">${a.reasons.map((r) => `<li class="${r.tone}">${esc(r.text)}</li>`).join("")}</ul>
     <div class="muted" style="margin-top:6px">Confidence ${a.confidence}% · score ${a.score > 0 ? "+" : ""}${a.score}</div>
-  </div>`;
+  </div>
+  <div class="buzz" id="buzz"><div class="buzz-head"><b>News &amp; buzz</b><div class="buzz-tabs" role="tablist"><button data-bt="stock" class="active">${esc(label(a.symbol))}</button><button data-bt="world">World</button></div></div><div id="buzz-body" class="muted">Loading headlines…</div></div>`;
+  loadBuzz(a.symbol, "stock");
 }
+
+/* news & social buzz: context only, does not change David's score */
+const ago = (t) => { const m = Math.max(1, Math.round((Date.now() / 1000 - t) / 60)); return m < 60 ? `${m}m` : m < 1440 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`; };
+let buzzReq = 0;
+async function loadBuzz(sym, tab) {
+  const id = ++buzzReq, body = () => $("buzz-body");
+  document.querySelectorAll("#buzz [data-bt]").forEach((b) => b.classList.toggle("active", b.dataset.bt === tab));
+  if (!body()) return;
+  body().innerHTML = '<span class="muted">Loading headlines…</span>';
+  try {
+    const b = await api(tab === "world" ? "/api/world" : `/api/buzz?symbol=${encodeURIComponent(sym)}`);
+    if (id !== buzzReq || !body()) return;
+    const s = b.social, tagged = s ? s.bullish + s.bearish : 0, bullPct = tagged ? Math.round(s.bullish / tagged * 100) : 0;
+    const social = s && tagged >= 3 ? `<a class="sent" href="${esc(s.url)}" target="_blank" rel="noopener" title="Based on the ${s.count} latest StockTwits posts (${tagged} tagged bullish/bearish)">
+        <span class="sent-l">StockTwits</span><span class="sent-bar"><i style="width:${bullPct}%"></i></span><span class="up">${bullPct}% bullish</span><span class="down">${100 - bullPct}% bearish</span></a>` : "";
+    const tone = (t) => t > 0 ? '<i class="nt up" title="Positive headline">▲</i>' : t < 0 ? '<i class="nt down" title="Negative headline">▼</i>' : '<i class="nt" title="Neutral headline">●</i>';
+    const news = b.news.length ? `<ul class="news">${b.news.map((n) => `<li>${tone(n.tone)}<a href="${esc(n.link)}" target="_blank" rel="noopener">${esc(n.title)}</a><span class="muted">${esc(n.source)}${n.time ? " · " + ago(n.time) : ""}</span></li>`).join("")}</ul>` : '<p class="muted">No headlines this week.</p>';
+    body().innerHTML = `<p class="buzz-sum">${esc(b.summary.text)}</p>${social}${news}<p class="muted buzz-note">Headlines from Google News${s ? ", posts from StockTwits" : ""}. Shown for context; they don't change David's verdict.</p>`;
+  } catch (e) { if (id === buzzReq && body()) body().innerHTML = `<span class="muted">Couldn't load news: ${esc(e.message)}</span>`; }
+}
+document.addEventListener("click", (e) => { const b = e.target.closest("#buzz [data-bt]"); if (b) loadBuzz(state.symbol, b.dataset.bt); });
 
 let verdictReq = 0;
 async function loadVerdict() {

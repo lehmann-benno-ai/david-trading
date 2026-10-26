@@ -165,6 +165,116 @@ def search(q):
     return out
 
 
+
+# ---------------------------------------------------------------- news & social buzz (context only, not scored)
+_text_cache = {}
+POS_WORDS = {"surge", "surges", "soar", "soars", "jump", "jumps", "rally", "rallies", "beat", "beats", "record", "upgrade",
+             "upgraded", "gain", "gains", "rise", "rises", "climb", "climbs", "strong", "boost", "boosts", "outperform", "bullish",
+             "growth", "profit", "wins", "approval", "approved", "partnership", "buyback", "raises", "tops", "higher"}
+NEG_WORDS = {"plunge", "plunges", "drop", "drops", "fall", "falls", "slump", "slumps", "tumble", "tumbles", "sink", "sinks",
+             "miss", "misses", "downgrade", "downgraded", "cut", "cuts", "lawsuit", "probe", "investigation", "recall", "loss",
+             "losses", "weak", "warning", "warns", "layoffs", "tariff", "tariffs", "fine", "fined", "bearish", "crash", "lower",
+             "fears", "selloff", "sell-off", "bankruptcy", "fraud", "halt", "strike", "war", "sanctions", "decline", "declines"}
+
+
+def fetch_text(url, ttl):
+    hit = _text_cache.get(url)
+    if hit and time.time() - hit[0] < ttl:
+        return hit[1]
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=12) as r:
+            text = r.read().decode("utf-8", "replace")
+    except Exception:
+        if hit:
+            return hit[1]
+        raise
+    _text_cache[url] = (time.time(), text)
+    return text
+
+
+def headline_tone(title):
+    words = set(re.findall(r"[a-z][a-z\-]+", title.lower()))
+    return len(words & POS_WORDS) - len(words & NEG_WORDS)
+
+
+def google_news(query, limit=6, path=None):
+    import html
+    from email.utils import parsedate_to_datetime
+    url = path or f"https://news.google.com/rss/search?q={urllib.parse.quote(query)}&hl=en-US&gl=US&ceid=US:en"
+    xml = fetch_text(url, 600)
+    out, seen = [], set()
+    for item in re.findall(r"<item>(.*?)</item>", xml, re.S):
+        title = html.unescape(re.sub(r"<.*?>", "", (re.search(r"<title>(.*?)</title>", item, re.S) or [None, ""])[1]))
+        link = (re.search(r"<link>(.*?)</link>", item) or [None, ""])[1]
+        src = html.unescape((re.search(r"<source[^>]*>(.*?)</source>", item) or [None, ""])[1])
+        date = (re.search(r"<pubDate>(.*?)</pubDate>", item) or [None, ""])[1]
+        if src and title.endswith(" - " + src):
+            title = title[: -len(src) - 3]
+        if not title or not link.startswith("https://") or title.lower() in seen:
+            continue
+        seen.add(title.lower())
+        try:
+            ts = int(parsedate_to_datetime(date).timestamp())
+        except Exception:
+            ts = 0
+        out.append({"title": title, "link": link, "source": src, "time": ts, "tone": headline_tone(title)})
+    out.sort(key=lambda x: -x["time"])
+    return out[:limit]
+
+
+def stocktwits(symbol):
+    sym = {"^GSPC": "SPY", "^IXIC": "QQQ", "^DJI": "DIA"}.get(symbol, symbol)
+    if sym.endswith("-USD"):
+        sym = sym[:-4] + ".X"
+    if sym.startswith("^") or "." in sym and not sym.endswith(".X"):
+        return None
+    data = json.loads(fetch_text(f"https://api.stocktwits.com/api/2/streams/symbol/{urllib.parse.quote(sym)}.json", 300))
+    msgs = data.get("messages") or []
+    bull = sum(1 for m in msgs if ((m.get("entities") or {}).get("sentiment") or {}).get("basic") == "Bullish")
+    bear = sum(1 for m in msgs if ((m.get("entities") or {}).get("sentiment") or {}).get("basic") == "Bearish")
+    posts = [{"text": m["body"][:220], "sentiment": ((m.get("entities") or {}).get("sentiment") or {}).get("basic"),
+              "time": m.get("created_at")} for m in msgs[:4] if m.get("body")]
+    return {"symbol": sym, "count": len(msgs), "bullish": bull, "bearish": bear, "posts": posts,
+            "watchers": (data.get("symbol") or {}).get("watchlist_count"),
+            "url": f"https://stocktwits.com/symbol/{sym}"}
+
+
+def summarize_buzz(news, social):
+    tone = sum(1 if n["tone"] > 0 else -1 if n["tone"] < 0 else 0 for n in news)
+    parts = []
+    if news:
+        parts.append("News is mostly positive" if tone >= 2 else "News is mostly negative" if tone <= -2 else "News is mixed")
+    if social and social["bullish"] + social["bearish"] >= 3:
+        b = social["bullish"] / (social["bullish"] + social["bearish"]) * 100
+        parts.append(f"{b:.0f}% of tagged StockTwits posts are bullish")
+    return {"tone": tone, "text": "; ".join(parts) + "." if parts else "Not much buzz right now."}
+
+
+def get_buzz(symbol):
+    try:
+        name = get_chart(symbol, "1mo")["name"]
+    except Exception:
+        name = symbol
+    query = f'"{name}" when:7d' if name and name != symbol else f"{symbol} stock when:7d"
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        fn = ex.submit(google_news, query)
+        fs = ex.submit(stocktwits, symbol)
+        try:
+            news = fn.result()
+        except Exception:
+            news = []
+        try:
+            social = fs.result()
+        except Exception:
+            social = None
+    return {"symbol": symbol, "name": name, "news": news, "social": social, "summary": summarize_buzz(news, social)}
+
+
+def get_world():
+    news = google_news("", limit=8, path="https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en")
+    return {"news": news, "summary": summarize_buzz(news, None)}
+
+
 # ---------------------------------------------------------------- David's brain
 def sma(vals, n):
     return sum(vals[-n:]) / n if len(vals) >= n else None
@@ -298,7 +408,7 @@ SUMMARY = {
 
 STOPWORDS = {"I", "A", "AND", "OR", "THE", "IS", "IT", "TO", "BUY", "SELL", "HOLD", "SHOULD", "WHAT", "HOW",
              "ABOUT", "DO", "YOU", "THINK", "OF", "ON", "IN", "ME", "MY", "NOW", "STOCK", "STOCKS", "DAVID", "HI",
-             "HELLO", "HEY", "PLEASE", "TELL", "CAN", "SHARE", "SHARES", "ANALYZE", "ANALYSE", "WORTH", "IF", "GOOD",
+             "HELLO", "HEY", "PLEASE", "NEWS", "BUZZ", "SOCIAL", "WORLD", "LATEST", "ANY", "TELL", "CAN", "SHARE", "SHARES", "ANALYZE", "ANALYSE", "WORTH", "IF", "GOOD",
              "BAD", "TODAY", "VS", "COMPARE", "WITH", "WHY", "ARE", "FOR", "THIS", "THAT", "GIVE", "STATS", "SOME"}
 
 
@@ -341,7 +451,16 @@ def david_reply(message):
                         "Strong winners get BUY or STRONG BUY, big losers get SELL or STRONG SELL. I tested 8 methods on "
                         "60 stocks from 2010 to 2026 and this one picked the best stocks. I still show the 200-day average, "
                         "RSI and volatility for context. Past results don't guarantee anything, and this isn't financial advice."}
+    if re.search(r"\b(world|markets?|events?)\b", low) and "news" in low or re.fullmatch(r"(what'?s|any|latest)? ?news\??", low):
+        w = get_world()
+        lines = "\n".join(f"• {n['title']} ({n['source']})" for n in w["news"][:5])
+        return {"text": f"Top business & world headlines right now. {w['summary']['text']}\n{lines}\n"
+                        "I show news as context only; my verdicts come from price momentum, which I could backtest."}
     syms = resolve_symbols(msg)
+    if syms and re.search(r"\b(news|buzz|social|sentiment|twitter|stocktwits|reddit|happening)\b", low):
+        b = get_buzz(syms[0])
+        lines = "\n".join(f"• {n['title']} ({n['source']})" for n in b["news"][:4])
+        return {"text": f"News & buzz for {b['name']} ({syms[0]}): {b['summary']['text']}\n{lines or 'No headlines this week.'}"}
     if not syms:
         return {"text": "I couldn't find a stock in that message. Try a ticker like AAPL, TSLA or SAP, or a company name."}
     analyses, errors = [], []
@@ -734,6 +853,10 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_json(search(q.get("q", ""))[:8] if q.get("q") else [])
             if u.path == "/api/analysis":
                 return self.send_json(analyze(q.get("symbol", "^GSPC").upper()))
+            if u.path == "/api/buzz":
+                return self.send_json(get_buzz(q.get("symbol", "^GSPC").upper()))
+            if u.path == "/api/world":
+                return self.send_json(get_world())
             if u.path == "/api/david":
                 return self.send_json(david_reply(q.get("q", "")[:300]))
             return self.send_json({"error": "not found"}, 404)
