@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>David Trading — Stock Consulting</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%232962ff'/><path d='M6 22l6-7 5 4 9-11' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#2962ff"/><path d="M6 22l6-7 5 4 9-11" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <span>David<b>Trading</b></span>
+  </div>
+  <button class="spx" id="spx" title="Open S&amp;P 500 chart">
+    <div class="spx-info">
+      <span class="spx-name">S&amp;P 500</span>
+      <span class="spx-price" id="spx-price">—</span>
+      <span class="chg" id="spx-chg"></span>
+    </div>
+    <canvas id="spx-spark" width="140" height="40"></canvas>
+  </button>
+  <div class="tape" aria-label="Market ticker">
+    <div class="tape-track" id="tape"></div>
+  </div>
+</header>
+
+<main class="layout">
+  <aside class="watchlist panel">
+    <div class="search">
+      <input id="search" type="search" placeholder="Search stocks, e.g. Tesla, SAP…" autocomplete="off" aria-label="Search stocks">
+      <ul id="search-results" class="search-results" hidden></ul>
+    </div>
+    <h2>Watchlist</h2>
+    <ul id="watchlist" class="wl"></ul>
+  </aside>
+
+  <section class="chart-area panel">
+    <div class="chart-head">
+      <div>
+        <h1 id="sym-name">Loading…</h1>
+        <div class="sym-sub"><span id="sym-code"></span> · <span id="sym-exch"></span></div>
+      </div>
+      <div class="price-box">
+        <div id="sym-price" class="big-price">—</div>
+        <div id="sym-chg" class="chg"></div>
+      </div>
+    </div>
+    <div class="toolbar">
+      <div class="ranges" id="ranges" role="group" aria-label="Time range">
+        <button data-r="1mo">1M</button><button data-r="3mo">3M</button><button data-r="6mo">6M</button><button data-r="ytd">YTD</button><button data-r="1y" class="active">1Y</button><button data-r="2y">2Y</button><button data-r="5y">5Y</button><button data-r="max">MAX</button>
+      </div>
+      <div class="toggles">
+        <label><input type="checkbox" id="t-candle" checked> Candles</label>
+        <label><input type="checkbox" id="t-sma50" checked> <i class="dot" style="background:#ff9800"></i>SMA 50</label>
+        <label><input type="checkbox" id="t-sma200" checked> <i class="dot" style="background:#e040fb"></i>SMA 200</label>
+      </div>
+    </div>
+    <div id="chart" class="chart"></div>
+    <div class="stats" id="stats"></div>
+  </section>
+
+  <aside class="david panel">
+    <div class="david-head">
+      <div class="avatar" aria-hidden="true">D</div>
+      <div>
+        <h2>David</h2>
+        <div class="muted">Your AI stock consultant</div>
+      </div>
+    </div>
+    <div id="verdict" class="verdict"></div>
+    <div id="chat" class="chat" aria-live="polite"></div>
+    <div class="suggestions" id="suggestions">
+      <button>Should I buy NVDA?</button><button>Compare AAPL and MSFT</button><button>What about Tesla?</button><button>How do you work?</button>
+    </div>
+    <form id="chat-form" class="chat-form">
+      <input id="chat-input" placeholder="Ask David about a stock…" autocomplete="off" aria-label="Message David">
+      <button type="submit" aria-label="Send">➤</button>
+    </form>
+    <p class="disclaimer">David uses technical analysis on historical prices (data: Yahoo Finance). Not financial advice.</p>
+  </aside>
+</main>
+<script src="lightweight-charts.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
