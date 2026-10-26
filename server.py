@@ -73,6 +73,44 @@ def get_ticker():
     return [by_sym[s] for s in TICKER_SYMBOLS if s in by_sym]
 
 
+def _spark(symbols):
+    url = f"{YF}/v7/finance/spark?symbols={urllib.parse.quote(','.join(symbols))}&range=1d&interval=5m"
+    data = fetch_json(url, 30)
+    out = {}
+    for item in data.get("spark", {}).get("result", []) or []:
+        meta = ((item.get("response") or [{}])[0]).get("meta", {})
+        if meta.get("regularMarketPrice") is not None:
+            out[item.get("symbol")] = meta
+    return out
+
+
+def get_quotes(symbols):
+    """Latest prices plus a USD conversion rate so the demo broker can settle everything in USD."""
+    symbols = [s.strip().upper() for s in symbols if s.strip()][:20]
+    if not symbols:
+        return {}
+    metas = _spark(symbols)
+    ccys = {(m.get("currency") or "USD") for m in metas.values()}
+    base = {c: ("GBP" if c == "GBp" else "ZAR" if c == "ZAc" else "ILS" if c == "ILA" else c) for c in ccys}
+    need = sorted({b for b in base.values() if b != "USD"})
+    fx = {"USD": 1.0}
+    if need:
+        for k, m in _spark([f"{c}USD=X" for c in need]).items():
+            fx[k[:3]] = m["regularMarketPrice"]
+    out = {}
+    for sym, m in metas.items():
+        ccy = m.get("currency") or "USD"
+        rate = fx.get(base[ccy])
+        if rate is None:
+            continue
+        if ccy in ("GBp", "ZAc", "ILA"):
+            rate /= 100
+        out[sym] = {"symbol": sym, "name": NAMES.get(sym, m.get("longName") or (m.get("shortName") or sym).strip()),
+                    "price": m["regularMarketPrice"], "currency": ccy, "usdRate": rate,
+                    "priceUsd": m["regularMarketPrice"] * rate, "changePercent": m.get("regularMarketChangePercent")}
+    return out
+
+
 def get_chart(symbol, rng="1y"):
     interval = "1wk" if rng in ("10y", "max") else "1d"
     url = f"{YF}/v8/finance/chart/{urllib.parse.quote(symbol)}?range={rng}&interval={interval}&includePrePost=false"
@@ -356,6 +394,8 @@ class Handler(SimpleHTTPRequestHandler):
                 if rng not in VALID_RANGES:
                     rng = "1y"
                 return self.send_json(get_chart(q.get("symbol", "^GSPC").upper(), rng))
+            if u.path == "/api/quote":
+                return self.send_json(get_quotes(q.get("symbols", "").split(",")))
             if u.path == "/api/search":
                 return self.send_json(search(q.get("q", ""))[:8] if q.get("q") else [])
             if u.path == "/api/analysis":

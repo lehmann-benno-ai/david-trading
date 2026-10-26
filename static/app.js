@@ -3,7 +3,7 @@ const WATCH = ["^GSPC","^IXIC","^DJI","AAPL","MSFT","NVDA","AMZN","GOOGL","META"
 const state = { symbol: "^GSPC", range: "1y", ticker: [], candles: [] };
 
 const fmt = (n, d = 2) => n == null || isNaN(n) ? "—" : Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
-const fmtPct = (n) => n == null || isNaN(n) ? "—" : (n >= 0 ? "+" : "") + n.toFixed(2) + "%";
+const fmtPct = (n) => n == null || isNaN(n) ? "—" : Math.abs(n) < 0.005 ? "0.00%" : (n > 0 ? "+" : "") + n.toFixed(2) + "%";
 const cls = (n) => n == null ? "" : n >= 0 ? "up" : "down";
 const fmtVol = (n) => !n ? "—" : n >= 1e9 ? (n / 1e9).toFixed(2) + "B" : n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "K" : n;
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
