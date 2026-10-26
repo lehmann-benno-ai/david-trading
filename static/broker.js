@@ -21,6 +21,14 @@ async function fetchQuotes(symbols) {
   return q;
 }
 
+function davidFund() {
+  const ap = JSON.parse(localStorage.getItem("davidAutopilot") || "null");
+  if (!ap) return { value: 0, syms: [] };
+  let value = ap.cash;
+  for (const [s, p] of Object.entries(ap.positions)) value += broker.quotes[s] ? p.shares * broker.quotes[s].priceUsd : p.cost;
+  return { value, syms: Object.keys(ap.positions) };
+}
+
 function portfolioTotals() {
   const a = broker.acct;
   let value = 0, cost = 0;
@@ -29,13 +37,14 @@ function portfolioTotals() {
     value += q ? p.shares * q.priceUsd : p.cost;
     cost += p.cost;
   }
-  const total = a.cash + value;
-  return { value, cost, total, pl: total - a.startCash, plPct: (total / a.startCash - 1) * 100 };
+  const fund = davidFund().value;
+  const total = a.cash + value + fund;
+  return { value, cost, fund, total, pl: total - a.startCash, plPct: (total / a.startCash - 1) * 100 };
 }
 
 async function refreshAccountButton() {
   if (!broker.acct) { $("acct-value").textContent = "Start demo trading"; return; }
-  try { await fetchQuotes(Object.keys(broker.acct.positions)); } catch {}
+  try { await fetchQuotes([...Object.keys(broker.acct.positions), ...davidFund().syms]); } catch {}
   const t = portfolioTotals();
   $("acct-value").innerHTML = `${usd(t.total)} <span class="${cls(t.pl)}">${fmtPct(t.plPct)}</span>`;
 }
@@ -186,7 +195,7 @@ const verdictCache = {};
 async function renderPortfolio() {
   const a = broker.acct;
   const syms = Object.keys(a.positions);
-  try { await fetchQuotes(syms); } catch {}
+  try { await fetchQuotes([...syms, ...davidFund().syms]); } catch {}
   const t = portfolioTotals();
   $("pf-summary").innerHTML = [
     ["Total value", usd(t.total)],
@@ -194,6 +203,7 @@ async function renderPortfolio() {
     ["Demo cash", usd(a.cash)],
     ["Invested (market value)", usd(t.value)],
     ["Starting money", usd(a.startCash)],
+    ...(t.fund > 0 ? [["Managed by David", usd(t.fund)]] : []),
   ].map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
 
   $("pf-positions").innerHTML = `<tr><th>Stock</th><th class="num">Shares</th><th class="num">Avg cost</th><th class="num">Price</th><th class="num">Value</th><th class="num">Profit / loss</th><th>David</th><th></th></tr>` +
@@ -235,3 +245,14 @@ $("pf-reset").addEventListener("click", () => {
 
 refreshAccountButton();
 setInterval(() => { refreshAccountButton(); if ($("pf-dlg").open) renderPortfolio(); }, 30000);
+
+/* owner-only David Autopilot entry point */
+api("/api/me").then((me) => {
+  if (me.owner) {
+    const a = document.createElement("a");
+    a.href = "/david"; a.className = "ap-link"; a.innerHTML = '<span class="ap-dot" aria-hidden="true"></span>David Autopilot';
+    $("acct-btn").before(a);
+  } else if (me.configured) {
+    document.querySelector(".disclaimer").insertAdjacentHTML("beforeend", ' <a class="owner-link" href="/login.html">Owner login</a>');
+  }
+}).catch(() => {});

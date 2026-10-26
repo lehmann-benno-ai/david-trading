@@ -1,16 +1,25 @@
 """David Trading - stock consulting platform. Python stdlib server + Yahoo Finance proxy."""
+import hashlib
+import hmac
 import json
 import math
+import secrets
 import os
 import re
 import time
 import urllib.parse
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 STATIC = os.path.join(ROOT, "static")
+PRIVATE = os.path.join(ROOT, "private")
+OWNER_PASSWORD = os.environ.get("OWNER_PASSWORD", "")
+SESSION_SECRET = (os.environ.get("SESSION_SECRET") or secrets.token_hex(32)).encode()
+SESSION_DAYS = 30
+COOKIE = "dt_session"
 UA = {"User-Agent": "Mozilla/5.0"}  # fuller browser UAs get HTTP 429 from Yahoo
 YF = "https://query1.finance.yahoo.com"
 
@@ -84,12 +93,14 @@ def _spark(symbols):
     return out
 
 
-def get_quotes(symbols):
+def get_quotes(symbols, limit=20):
     """Latest prices plus a USD conversion rate so the demo broker can settle everything in USD."""
-    symbols = [s.strip().upper() for s in symbols if s.strip()][:20]
+    symbols = list(dict.fromkeys(s.strip().upper() for s in symbols if s.strip()))[:limit]
     if not symbols:
         return {}
-    metas = _spark(symbols)
+    metas = {}
+    for i in range(0, len(symbols), 20):
+        metas.update(_spark(symbols[i:i + 20]))
     ccys = {(m.get("currency") or "USD") for m in metas.values()}
     base = {c: ("GBP" if c == "GBp" else "ZAR" if c == "ZAc" else "ILS" if c == "ILA" else c) for c in ccys}
     need = sorted({b for b in base.values() if b != "USD"})
@@ -360,6 +371,128 @@ def david_reply(message):
     return {"text": text, "analyses": analyses}
 
 
+# ---------------------------------------------------------------- owner auth
+_fails = {}
+
+
+def _sign(exp):
+    key = SESSION_SECRET + OWNER_PASSWORD.encode()
+    return hmac.new(key, str(exp).encode(), hashlib.sha256).hexdigest()
+
+
+def make_token():
+    exp = int(time.time()) + SESSION_DAYS * 86400
+    return f"{exp}.{_sign(exp)}"
+
+
+def valid_token(tok):
+    if not OWNER_PASSWORD or not tok or "." not in tok:
+        return False
+    exp, sig = tok.split(".", 1)
+    return exp.isdigit() and int(exp) > time.time() and hmac.compare_digest(sig, _sign(int(exp)))
+
+
+def check_password(pw):
+    a = hashlib.sha256(pw.encode()).digest()
+    b = hashlib.sha256(OWNER_PASSWORD.encode()).digest()
+    return bool(OWNER_PASSWORD) and hmac.compare_digest(a, b)
+
+
+def too_many_fails(ip):
+    now = time.time()
+    _fails[ip] = [t for t in _fails.get(ip, []) if now - t < 900]
+    return len(_fails[ip]) >= 5
+
+
+# ---------------------------------------------------------------- David autopilot
+AUTOPILOT_UNIVERSE = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "BRK-B", "JPM", "V",
+                      "LLY", "AVGO", "NFLX", "COST", "WMT", "XOM", "UNH", "MA", "SPY", "QQQ"]
+RISK_PROFILES = {
+    "conservative": {"reserve": 0.30, "max_pos": 5, "max_w": 0.15, "stop": -8.0, "min_score": 4},
+    "balanced": {"reserve": 0.10, "max_pos": 8, "max_w": 0.20, "stop": -12.0, "min_score": 2},
+    "aggressive": {"reserve": 0.02, "max_pos": 10, "max_w": 0.30, "stop": -18.0, "min_score": 2},
+}
+
+
+def _safe_analyze(sym):
+    try:
+        return sym, analyze(sym)
+    except Exception:
+        return sym, None
+
+
+def autopilot_plan(cash, positions, risk):
+    prof = RISK_PROFILES.get(risk, RISK_PROFILES["balanced"])
+    held = {s.upper(): p for s, p in positions.items() if float(p.get("shares", 0)) > 0}
+    symbols = list(dict.fromkeys(list(held) + AUTOPILOT_UNIVERSE))
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        analyses = {s: a for s, a in ex.map(_safe_analyze, symbols) if a}
+    quotes = get_quotes(symbols, limit=60)
+    price = {s: q["priceUsd"] for s, q in quotes.items()}
+    value = {s: float(p["shares"]) * price[s] for s, p in held.items() if s in price}
+    total = cash + sum(value.values())
+    trades, sold_out = [], set()
+
+    def trade(side, sym, usd_amount, reason):
+        sh = round(usd_amount / price[sym], 6)
+        if sh <= 0:
+            return
+        q = quotes[sym]
+        trades.append({"side": side, "symbol": sym, "name": q["name"], "shares": sh, "price": q["price"],
+                       "currency": q["currency"], "priceUsd": price[sym], "total": sh * price[sym], "reason": reason})
+
+    for s, p in held.items():
+        if s not in price:
+            continue
+        a, shares, cost = analyses.get(s), float(p["shares"]), float(p.get("cost", 0))
+        pl = (value[s] / cost - 1) * 100 if cost else 0
+        if pl <= prof["stop"]:
+            trade("sell", s, value[s], f"Stop-loss: down {pl:.1f}% from what I paid, cutting the loss.")
+            sold_out.add(s)
+        elif a and a["verdict"] == "STRONG SELL":
+            trade("sell", s, value[s], f"My verdict turned STRONG SELL (score {a['score']:+d}). Selling everything.")
+            sold_out.add(s)
+        elif a and a["verdict"] == "SELL":
+            if value[s] < 100:
+                trade("sell", s, value[s], f"Verdict is SELL (score {a['score']:+d}); closing this small position.")
+                sold_out.add(s)
+            else:
+                trade("sell", s, value[s] / 2, f"Verdict is SELL (score {a['score']:+d}). Selling half to reduce risk.")
+        elif total and value[s] / total > prof["max_w"] * 1.25:
+            trade("sell", s, value[s] - prof["max_w"] * total,
+                  f"Position grew to {value[s] / total * 100:.0f}% of the fund. Taking some profit.")
+
+    cash_after = cash + sum(t["total"] for t in trades)
+    for t in trades:
+        value[t["symbol"]] = value.get(t["symbol"], 0) - t["total"]
+
+    cands = sorted((a for s, a in analyses.items() if s in price and s not in sold_out and a["score"] >= prof["min_score"]),
+                   key=lambda a: (a["score"], a["stats"]["returns"].get("6M") or 0), reverse=True)[:prof["max_pos"]]
+    invest_cap = (1 - prof["reserve"]) * total
+    weight_sum = sum(a["score"] for a in cands) or 1
+    spendable = max(0.0, cash_after - prof["reserve"] * total)
+    min_trade = max(25.0, 0.01 * total)
+    for a in cands:
+        s = a["symbol"]
+        target = min(prof["max_w"], a["score"] / weight_sum * (1 - prof["reserve"])) * total
+        target = min(target, invest_cap)
+        gap = target - value.get(s, 0)
+        if gap < min_trade or spendable < min_trade:
+            continue
+        amount = min(gap, spendable)
+        bull = next((r["text"] for r in a["reasons"] if r["tone"] == "bull"), "")
+        trade("buy", s, amount, f"Verdict {a['verdict']} (score {a['score']:+d}). {bull}".strip())
+        spendable -= amount
+
+    verdicts = {s: {"verdict": a["verdict"], "score": a["score"], "name": a["name"]} for s, a in analyses.items()}
+    buys = sum(1 for t in trades if t["side"] == "buy")
+    if not trades:
+        note = "No changes needed. Your fund already matches my current view of the market."
+    else:
+        note = f"{buys} buy(s), {len(trades) - buys} sell(s)."
+    return {"trades": trades, "total": total, "note": note, "verdicts": verdicts, "quotes": quotes, "risk": risk}
+
+
 # ---------------------------------------------------------------- HTTP
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *a, **kw):
@@ -381,8 +514,110 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    # ---- owner session helpers
+    def cookie(self, name):
+        for part in (self.headers.get("Cookie") or "").split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == name:
+                return v
+        return None
+
+    def is_owner(self):
+        return valid_token(self.cookie(COOKIE))
+
+    def client_ip(self):
+        return (self.headers.get("X-Forwarded-For") or self.client_address[0]).split(",")[0].strip()
+
+    def set_session(self, token, max_age):
+        secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""
+        return f"{COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={max_age}{secure}"
+
+    def send_json_cookie(self, obj, cookie, status=200):
+        body = json.dumps(obj).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Set-Cookie", cookie)
+        self.end_headers()
+        self.wfile.write(body)
+
+    def redirect(self, location):
+        self.send_response(302)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def serve_private(self, name):
+        path = os.path.realpath(os.path.join(PRIVATE, name))
+        if not path.startswith(PRIVATE + os.sep) or not os.path.isfile(path):
+            return self.send_json({"error": "not found"}, 404)
+        ctype = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
+                 ".css": "text/css; charset=utf-8"}.get(os.path.splitext(path)[1], "application/octet-stream")
+        with open(path, "rb") as f:
+            body = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Robots-Tag", "noindex")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def read_json(self):
+        if (self.headers.get("Content-Type") or "").split(";")[0].strip() != "application/json":
+            raise ValueError("Content-Type must be application/json")
+        n = int(self.headers.get("Content-Length") or 0)
+        if n > 200_000:
+            raise ValueError("Request too large")
+        return json.loads(self.rfile.read(n) or b"{}")
+
+    def do_POST(self):
+        u = urllib.parse.urlparse(self.path)
+        try:
+            body = self.read_json()
+        except Exception as e:
+            return self.send_json({"error": str(e)}, 400)
+        if u.path == "/api/login":
+            if not OWNER_PASSWORD:
+                return self.send_json({"error": "The owner area is not set up yet."}, 503)
+            ip = self.client_ip()
+            if too_many_fails(ip):
+                return self.send_json({"error": "Too many wrong attempts. Try again in 15 minutes."}, 429)
+            if not check_password(str(body.get("password", ""))):
+                _fails.setdefault(ip, []).append(time.time())
+                time.sleep(0.5)
+                return self.send_json({"error": "Wrong password."}, 401)
+            _fails.pop(ip, None)
+            return self.send_json_cookie({"ok": True}, self.set_session(make_token(), SESSION_DAYS * 86400))
+        if u.path == "/api/logout":
+            return self.send_json_cookie({"ok": True}, self.set_session("", 0))
+        if u.path == "/api/autopilot/plan":
+            if not self.is_owner():
+                return self.send_json({"error": "Login required"}, 401)
+            try:
+                cash = max(0.0, float(body.get("cash", 0)))
+                positions = body.get("positions") or {}
+                if not isinstance(positions, dict) or len(positions) > 40:
+                    raise ValueError("bad positions")
+                return self.send_json(autopilot_plan(cash, positions, str(body.get("risk", "balanced"))))
+            except (ValueError, TypeError) as e:
+                return self.send_json({"error": f"Bad request: {e}"}, 400)
+            except Exception as e:
+                return self.send_json({"error": f"Data source error: {e}"}, 502)
+        return self.send_json({"error": "not found"}, 404)
+
     def do_GET(self):
         u = urllib.parse.urlparse(self.path)
+        if u.path in ("/david", "/david/"):
+            if not self.is_owner():
+                return self.redirect("/login.html?next=/david")
+            return self.serve_private("david.html")
+        if u.path.startswith("/private/"):
+            if not self.is_owner():
+                return self.send_json({"error": "Login required"}, 401)
+            return self.serve_private(u.path[len("/private/"):])
+        if u.path == "/api/me":
+            return self.send_json({"owner": self.is_owner(), "configured": bool(OWNER_PASSWORD)})
         if not u.path.startswith("/api/"):
             return super().do_GET()
         q = {k: v[0] for k, v in urllib.parse.parse_qs(u.query).items()}

@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex">
+<title>David Autopilot — David Trading</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a href="/" class="brand"><svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#2962ff"/><path d="M6 22l6-7 5 4 9-11" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg><span>David<b>Trading</b></span></a>
+  <div class="ap-title"><span class="demo-tag">DEMO</span> David Autopilot <span class="lock">private</span></div>
+  <div class="ap-top-actions"><a class="btn-ghost" href="/">← Markets</a><button class="btn-ghost" id="logout">Log out</button></div>
+</header>
+<main class="ap-layout">
+  <section class="panel ap-main">
+    <div class="ap-hero">
+      <div class="avatar" aria-hidden="true">D</div>
+      <div>
+        <h1>David manages your demo money</h1>
+        <p class="muted">Give David part of your demo cash. He checks the market every 30 minutes while this page is open (and every time you open it), buys stocks he rates BUY, sells the ones turning SELL, and explains every move.</p>
+      </div>
+    </div>
+    <div class="pf-summary" id="ap-summary"></div>
+    <div class="ap-chart-wrap"><div id="ap-chart" class="ap-chart"></div><div class="ap-chart-empty muted" id="ap-chart-empty">The fund's value chart appears once David starts investing.</div></div>
+    <h4>David's holdings</h4>
+    <div class="tbl-wrap"><table class="tbl" id="ap-positions"></table></div>
+    <h4>What David did (and why)</h4>
+    <div class="ap-log" id="ap-log"></div>
+  </section>
+  <aside class="panel ap-side">
+    <h4>Autopilot</h4>
+    <label class="switch"><input type="checkbox" id="ap-auto"><span class="slider"></span><span id="ap-auto-label">Off</span></label>
+    <p class="muted" id="ap-next"></p>
+    <button class="btn-primary wide" id="ap-run">Let David invest now</button>
+    <h4>Risk level</h4>
+    <div class="risk" id="ap-risk" role="group" aria-label="Risk level">
+      <button data-risk="conservative"><b>Careful</b><small>Max 5 stocks, keeps 30% cash, only strong signals</small></button>
+      <button data-risk="balanced"><b>Balanced</b><small>Max 8 stocks, keeps 10% cash</small></button>
+      <button data-risk="aggressive"><b>Bold</b><small>Max 10 stocks, almost fully invested</small></button>
+    </div>
+    <h4>Money</h4>
+    <p class="muted" id="ap-main-cash"></p>
+    <label class="field">Amount (USD)<input id="ap-amount" type="number" min="1" step="any" placeholder="e.g. 5000"></label>
+    <div class="ap-money-btns"><button class="btn-buy" id="ap-give">Give to David</button><button class="btn-ghost" id="ap-take">Take back cash</button></div>
+    <button class="btn-ghost danger wide" id="ap-close">Sell everything &amp; return all money</button>
+    <p class="order-err" id="ap-err" role="alert"></p>
+    <p class="disclaimer">Play money only. David uses technical signals on historical prices, so this is a simulation, not financial advice.</p>
+  </aside>
+</main>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script src="/lightweight-charts.js"></script>
+<script src="/private/david.js"></script>
+</body>
+</html>

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex">
+<title>Owner login — David Trading</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="login-page">
+<form class="dlg login-card" id="login-form">
+  <a href="/" class="brand"><svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#2962ff"/><path d="M6 22l6-7 5 4 9-11" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg><span>David<b>Trading</b></span></a>
+  <h3>Owner login</h3>
+  <p class="muted">This area is private. Only the owner can let David manage the demo money.</p>
+  <label class="field">Password<input id="pw" type="password" autocomplete="current-password" required autofocus></label>
+  <p class="order-err" id="err" role="alert"></p>
+  <div class="dlg-actions"><a href="/" class="btn-ghost">Back</a><button class="btn-primary" type="submit">Log in</button></div>
+</form>
+<script>
+const next = new URLSearchParams(location.search).get("next");
+const target = next && next.startsWith("/") && !next.startsWith("//") ? next : "/david";
+document.getElementById("login-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const err = document.getElementById("err"); err.textContent = "";
+  try {
+    const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: document.getElementById("pw").value }) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || "Login failed");
+    location.href = target;
+  } catch (x) { err.textContent = x.message; document.getElementById("pw").select(); }
+});
+</script>
+</body>
+</html>
