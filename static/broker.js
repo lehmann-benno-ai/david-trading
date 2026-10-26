@@ -208,7 +208,7 @@ $("order-form").addEventListener("submit", async (e) => {
 const posLayer = document.createElement("div");
 posLayer.className = "pos-layer";
 posLayer.innerHTML = `<div class="buy-vline" hidden><span></span></div>
-  <div class="pl-line" hidden><div class="pl-tag"><span class="pl-txt"></span><button type="button" class="pl-x" title="Close position (sell everything, demo)" aria-label="Close position">✕</button></div></div>`;
+  <div class="pl-line" hidden><div class="pl-tag"><span class="pl-val"></span><span class="pl-qty"></span><button type="button" class="pl-x" title="Close position (sell everything, demo)" aria-label="Close position">×</button></div></div>`;
 $("chart").appendChild(posLayer);
 const plLine = posLayer.querySelector(".pl-line"), buyLine = posLayer.querySelector(".buy-vline");
 let posView = null;
@@ -235,7 +235,8 @@ function updatePositionLines() {
   if (opened) for (let i = c.length - 1; i >= 0; i--) if (c[i].time <= ts) { barTime = c[i].time; break; }
   posView = { entry, barTime };
   plLine.classList.toggle("loss", pl < 0);
-  posLayer.querySelector(".pl-txt").innerHTML = `${shr(p.shares)} shares @ ${fmt(entry)} · <b>${pl >= 0 ? "+" : ""}${usd(pl)} (${fmtPct(plPct)})</b>`;
+  posLayer.querySelector(".pl-val").textContent = `${pl >= 0 ? "+" : ""}${usd(pl)}  ${fmtPct(plPct)}`;
+  posLayer.querySelector(".pl-qty").textContent = `${shr(p.shares)} @ ${fmt(entry)}`;
   buyLine.querySelector("span").textContent = opened ? `Bought ${new Date(opened).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}` : "";
   placePositionLines();
 }

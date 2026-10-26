@@ -184,15 +184,16 @@ a.btn-ghost,a.brand{color:var(--text);text-decoration:none}
 @media (max-width:700px){.ap-link{display:none}.login-link{font-size:12px;padding:5px 8px}}
 .pos-layer{position:absolute;inset:0;pointer-events:none;z-index:3;overflow:hidden}
 .pos-layer [hidden]{display:none}
-.pl-line{position:absolute;left:0;height:0;border-top:2px dashed var(--up)}
-.pl-line.loss{border-top-color:var(--down)}
-.pl-tag{position:absolute;left:8px;top:-13px;display:flex;align-items:center;gap:8px;background:var(--up);color:#fff;font-size:12px;border-radius:4px;padding:2px 2px 2px 8px;pointer-events:auto;white-space:nowrap;box-shadow:0 2px 8px #0006}
-.pl-line.loss .pl-tag{background:var(--down)}
-.pl-x{border:0;background:#0003;color:#fff;border-radius:3px;width:22px;height:20px;padding:0;font-size:12px;line-height:20px}
-.pl-x:hover{background:#0007}
+.pl-line{--c:var(--up);position:absolute;left:0;height:0;border-top:1px dashed var(--c)}
+.pl-line.loss{--c:var(--down)}
+.pl-tag{position:absolute;left:10px;top:-10px;height:20px;display:flex;align-items:stretch;background:#131722f2;border:1px solid var(--c);border-radius:3px;font-size:11px;line-height:18px;pointer-events:auto;white-space:nowrap;font-variant-numeric:tabular-nums;box-shadow:0 1px 4px #0008;overflow:hidden}
+.pl-val{padding:0 7px;background:var(--c);color:#fff;font-weight:600;white-space:pre}
+.pl-qty{padding:0 7px;color:var(--muted)}
+.pl-x{border:0;border-left:1px solid var(--line);background:transparent;color:var(--muted);width:20px;padding:0;font-size:14px;line-height:18px}
+.pl-x:hover{background:var(--c);color:#fff}
 .buy-vline{position:absolute;top:0;width:0;border-left:1px solid #f7c600b3}
 .buy-vline span{position:absolute;top:4px;left:4px;background:#f7c600;color:#111;font-size:9.5px;font-weight:700;padding:0 4px;border-radius:2px;white-space:nowrap;line-height:15px}
 .buy-vline.flip span{left:auto;right:4px}
 .pl-line[data-off=above],.pl-line[data-off=below]{border-top-color:transparent}
-.pl-line[data-off=above] .pl-txt::before{content:"▲ "}
-.pl-line[data-off=below] .pl-txt::before{content:"▼ "}
+.pl-line[data-off=above] .pl-val::before{content:"▲ "}
+.pl-line[data-off=below] .pl-val::before{content:"▼ "}
