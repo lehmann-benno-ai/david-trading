@@ -18,7 +18,7 @@ button{font:inherit;color:inherit;cursor:pointer}
 .tick{display:flex;align-items:center;gap:8px;padding:4px 12px;border-radius:6px;background:none;border:0;white-space:nowrap}
 .tick:hover{background:var(--panel2)}
 .tick .s{font-weight:700}.tick .p{color:var(--text)}.tick canvas{width:50px;height:20px}
-.layout{display:grid;grid-template-columns:240px 1fr 360px;gap:8px;padding:8px;height:calc(100vh - 64px);min-height:620px}
+.layout{display:grid;grid-template-columns:240px 1fr 360px;gap:8px;padding:8px;height:calc(100vh - 64px - var(--hb,0px));min-height:620px}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;min-height:0}
 h1{font-size:20px;margin:0}h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:14px 12px 6px}
 .watchlist{display:flex;flex-direction:column;overflow:hidden}
@@ -202,3 +202,17 @@ a.btn-ghost,a.brand{color:var(--text);text-decoration:none}
 .ap-quick button{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:6px 0;font-size:12px;font-weight:600}
 .ap-quick button:hover{border-color:var(--accent)}
 #ap-money[hidden],#ap-setup[hidden]{display:none}
+.holdbar{display:flex;align-items:center;gap:8px;height:34px;padding:0 16px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:64px;z-index:9;font-size:12px}
+.holdbar[hidden]{display:none}
+.holdbar.folded{height:26px}.holdbar.folded .hb-track{display:none}
+.hb-tab{flex-shrink:0;display:flex;align-items:center;gap:7px;background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700;color:var(--text);line-height:16px}
+.hb-tab:hover{border-color:var(--accent)}
+.hb-caret{display:inline-block;color:var(--muted);transition:transform .15s}.holdbar.folded .hb-caret{transform:rotate(-90deg)}
+.hb-n{background:var(--line);border-radius:8px;padding:0 6px;font-size:10px;color:var(--muted)}
+#hb-sum{display:flex;align-items:center;gap:6px;font-weight:600;font-variant-numeric:tabular-nums}
+.hb-track{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none;flex:1;min-width:0}
+.hb-track::-webkit-scrollbar{display:none}
+.hb-item{display:flex;align-items:center;gap:7px;padding:3px 10px;border-radius:4px;background:none;border:0;white-space:nowrap;font-size:12px;font-variant-numeric:tabular-nums}
+.hb-item:hover{background:var(--panel2)}.hb-item.active{background:#2962ff22}
+.hb-item .s{font-weight:700}.hb-item .v{color:var(--text)}.hb-item .hb-pl{font-size:11px;opacity:.8}
+@media (max-width:760px){.holdbar{padding:0 10px}.hb-item .hb-pl{display:none}}

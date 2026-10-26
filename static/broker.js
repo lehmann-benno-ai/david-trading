@@ -51,12 +51,39 @@ function portfolioTotals() {
 }
 
 async function refreshAccountButton() {
-  if (!broker.acct) { $("acct-value").textContent = "Start demo trading"; return; }
+  if (!broker.acct) { $("acct-value").textContent = "Start demo trading"; renderHoldbar(); return; }
   try { await fetchQuotes([...Object.keys(broker.acct.positions), ...davidFund().syms]); } catch {}
   updatePositionLines();
   const t = portfolioTotals();
   $("acct-value").innerHTML = `${usd(t.total)} <span class="${cls(t.pl)}">${fmtPct(t.plPct)}</span>`;
+  renderHoldbar();
 }
+
+/* second row under the ticker: the user's own positions, foldable */
+function renderHoldbar() {
+  const bar = $("holdbar"), pos = broker.acct ? Object.entries(broker.acct.positions) : [];
+  bar.hidden = !pos.length;
+  if (pos.length) {
+    let value = 0, cost = 0;
+    $("hb-track").innerHTML = pos.map(([s, p]) => {
+      const q = broker.quotes[s], v = q ? p.shares * q.priceUsd : p.cost, pl = v - p.cost;
+      value += v; cost += p.cost;
+      return `<button class="hb-item${s === state.symbol ? " active" : ""}" data-s="${esc(s)}" title="${esc(shr(p.shares))} shares, bought for ${usd(p.cost)}"><span class="s">${esc(label(s))}</span><span class="v">${usd(v)}</span><span class="${cls(pl)}">${fmtPct((v / p.cost - 1) * 100)}</span><span class="${cls(pl)} hb-pl">${pl >= 0 ? "+" : ""}${usd(pl)}</span></button>`;
+    }).join("");
+    const pl = value - cost;
+    $("hb-sum").innerHTML = `<span class="hb-n">${pos.length}</span><span class="${cls(pl)}">${pl >= 0 ? "+" : ""}${usd(pl)} · ${fmtPct((value / cost - 1) * 100)}</span>`;
+    const folded = localStorage.getItem("holdbarFolded") === "1";
+    bar.classList.toggle("folded", folded);
+    $("hb-tab").setAttribute("aria-expanded", String(!folded));
+  }
+  document.documentElement.style.setProperty("--hb", (bar.hidden ? 0 : bar.offsetHeight) + "px");
+}
+$("hb-tab").addEventListener("click", () => {
+  localStorage.setItem("holdbarFolded", $("holdbar").classList.contains("folded") ? "0" : "1");
+  renderHoldbar();
+});
+$("hb-track").addEventListener("click", (e) => { const b = e.target.closest(".hb-item"); if (b) selectSymbol(b.dataset.s); });
+document.addEventListener("chartloaded", () => { if (!$("holdbar").hidden) renderHoldbar(); });
 
 document.querySelectorAll("dialog [data-close]").forEach((b) => b.addEventListener("click", () => b.closest("dialog").close()));
 
