@@ -231,63 +231,52 @@ def analyze(symbol):
         score += points
         reasons.append({"tone": "bull" if good else "bear" if good is False else "neutral", "text": text})
 
-    if s200:
-        if price > s200:
-            add(2, True, f"Price is above the 200-day average ({s200:,.2f}) — the long-term trend is up.")
-        else:
-            add(-2, False, f"Price is below the 200-day average ({s200:,.2f}) — the long-term trend is down.")
-    if s50 and s200:
-        if s50 > s200:
-            add(1, True, "50-day average is above the 200-day average (golden-cross setup).")
-        else:
-            add(-1, False, "50-day average is below the 200-day average (death-cross setup).")
-    if s20 and s50:
-        if price > s20 > s50:
-            add(1, True, "Short-term momentum is strong: price > 20-day > 50-day average.")
-        elif price < s20 < s50:
-            add(-1, False, "Short-term momentum is weak: price < 20-day < 50-day average.")
-    if r is not None:
-        if r > 75:
-            add(-2, False, f"RSI is {r:.0f} — heavily overbought, a pullback is likely.")
-        elif r > 70:
-            add(-1, False, f"RSI is {r:.0f} — overbought territory.")
-        elif r < 25:
-            add(2, True, f"RSI is {r:.0f} — heavily oversold, a bounce is possible.")
-        elif r < 30:
-            add(1, True, f"RSI is {r:.0f} — oversold territory.")
-        else:
-            add(0, None, f"RSI is {r:.0f} — neutral, neither overbought nor oversold.")
-    if macd > macd_sig:
-        add(1, True, "MACD is above its signal line — bullish momentum.")
+    # Score = 12-1 momentum (return from 12 months ago to 1 month ago): the best of 8 methods in backtest/
+    if len(c) > 252:
+        mom, span = pct(c[-22], c[-253]), "12 months"
+    elif len(c) > 147:
+        mom, span = pct(c[-22], c[-127]), "6 months"
     else:
-        add(-1, False, "MACD is below its signal line — bearish momentum.")
-    if ret["6M"] is not None:
-        if ret["6M"] > 15:
-            add(1, True, f"Strong 6-month performance: {ret['6M']:+.1f}%.")
-        elif ret["6M"] < -15:
-            add(-1, False, f"Weak 6-month performance: {ret['6M']:+.1f}%.")
-        else:
-            add(0, None, f"6-month performance: {ret['6M']:+.1f}%.")
+        mom = None
+    if mom is None:
+        add(0, None, "Less than 6 months of history, which isn't enough for my momentum signal.")
+    else:
+        pts = int(mom > 0) + int(mom > 10) + int(mom > 30) + int(mom > 60) - int(mom < 0) - int(mom < -10) - int(mom < -30)
+        label = ("a very strong winner. In my backtest, stocks like this tended to keep beating the market" if mom > 60 else
+                 "a strong winner, and winners tended to keep beating the market" if mom > 30 else
+                 "a solid uptrend" if mom > 10 else
+                 "only slightly positive, so no clear edge" if mom > 0 else
+                 "slightly negative, so no clear edge" if mom > -10 else
+                 "a loser, and losers tended to keep lagging the market" if mom > -30 else
+                 "a deep loser, and these tended to keep lagging the market")
+        add(pts, True if mom > 10 else False if mom < -10 else None,
+            f"Momentum: {mom:+.1f}% over the past {span} (skipping the last month), {label}.")
+    if s200:
+        add(0, price > s200, f"Price is {'above' if price > s200 else 'below'} the 200-day average ({s200:,.2f}).")
+    if ret["1M"] is not None:
+        add(0, None, f"Last month: {ret['1M']:+.1f}%. Short-term moves are noise, so I don't score them.")
+    if r is not None:
+        add(0, None, f"RSI is {r:.0f}" + (" (overbought)." if r > 70 else " (oversold)." if r < 30 else "."))
     if vol > 60:
-        add(-1, False, f"Very high volatility ({vol:.0f}% annualised) — big swings, size positions carefully.")
+        add(0, False, f"Very high volatility ({vol:.0f}% a year): big swings, so keep the position small.")
     elif vol < 25:
-        add(0, None, f"Low volatility ({vol:.0f}% annualised) — a relatively calm stock.")
+        add(0, None, f"Low volatility ({vol:.0f}% a year): a relatively calm stock.")
     if pos52 > 95:
         add(0, None, "Trading right at its 52-week high.")
     elif pos52 < 10:
         add(0, None, "Trading near its 52-week low.")
 
-    if score >= 5:
+    if score >= 4:
         verdict = "STRONG BUY"
     elif score >= 2:
         verdict = "BUY"
-    elif score <= -5:
+    elif score <= -3:
         verdict = "STRONG SELL"
     elif score <= -2:
         verdict = "SELL"
     else:
         verdict = "HOLD"
-    confidence = min(95, 50 + abs(score) * 6)
+    confidence = min(90, 50 + abs(score) * 10)
 
     return {
         "symbol": data["symbol"], "name": data["name"], "currency": data["currency"],
@@ -348,9 +337,10 @@ def david_reply(message):
         return {"text": "Hi, I'm David, your stock consultant. Name a stock (ticker or company) and I'll tell you "
                         "whether it looks like a buy, hold or sell — with the numbers behind it."}
     if "help" in low or "how do you work" in low or "how does" in low:
-        return {"text": "I look at 2 years of daily prices and score the trend (20/50/200-day averages), momentum "
-                        "(RSI, MACD), recent performance and risk (volatility, drawdown). The total score becomes "
-                        "STRONG BUY, BUY, HOLD, SELL or STRONG SELL. This is technical analysis only — not financial advice."}
+        return {"text": "I score each stock by its momentum: how much it rose or fell from 12 months ago to 1 month ago. "
+                        "Strong winners get BUY or STRONG BUY, big losers get SELL or STRONG SELL. I tested 8 methods on "
+                        "60 stocks from 2010 to 2026 and this one picked the best stocks. I still show the 200-day average, "
+                        "RSI and volatility for context. Past results don't guarantee anything, and this isn't financial advice."}
     syms = resolve_symbols(msg)
     if not syms:
         return {"text": "I couldn't find a stock in that message. Try a ticker like AAPL, TSLA or SAP, or a company name."}
@@ -472,7 +462,7 @@ def rate_limited(store, ip, limit, window):
 AUTOPILOT_UNIVERSE = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "BRK-B", "JPM", "V",
                       "LLY", "AVGO", "NFLX", "COST", "WMT", "XOM", "UNH", "MA", "SPY", "QQQ"]
 RISK_PROFILES = {
-    "conservative": {"reserve": 0.30, "max_pos": 5, "max_w": 0.15, "stop": -8.0, "min_score": 4},
+    "conservative": {"reserve": 0.30, "max_pos": 5, "max_w": 0.15, "stop": -8.0, "min_score": 3},
     "balanced": {"reserve": 0.10, "max_pos": 8, "max_w": 0.20, "stop": -12.0, "min_score": 2},
     "aggressive": {"reserve": 0.02, "max_pos": 10, "max_w": 0.30, "stop": -18.0, "min_score": 2},
 }
