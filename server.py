@@ -4,6 +4,7 @@ import hmac
 import json
 import math
 import secrets
+import threading
 import os
 import re
 import time
@@ -16,7 +17,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 ROOT = os.path.dirname(os.path.abspath(__file__))
 STATIC = os.path.join(ROOT, "static")
 PRIVATE = os.path.join(ROOT, "private")
-OWNER_PASSWORD = os.environ.get("OWNER_PASSWORD", "")
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 SESSION_SECRET = (os.environ.get("SESSION_SECRET") or secrets.token_hex(32)).encode()
 SESSION_DAYS = 30
 COOKIE = "dt_session"
@@ -371,37 +372,100 @@ def david_reply(message):
     return {"text": text, "analyses": analyses}
 
 
-# ---------------------------------------------------------------- owner auth
-_fails = {}
+# ---------------------------------------------------------------- accounts (Postgres via DATABASE_URL, SQLite locally)
+if DATABASE_URL:
+    import psycopg
+
+    def _connect():
+        return psycopg.connect(DATABASE_URL, autocommit=True)
+    PH, ID_COL = "%s", "BIGSERIAL PRIMARY KEY"
+else:
+    import sqlite3
+
+    def _connect():
+        c = sqlite3.connect(os.path.join(ROOT, "data.db"), check_same_thread=False)
+        c.isolation_level = None
+        return c
+    PH, ID_COL = "?", "INTEGER PRIMARY KEY AUTOINCREMENT"
+
+_conn = None
+_db_lock = threading.Lock()
 
 
-def _sign(exp):
-    key = SESSION_SECRET + OWNER_PASSWORD.encode()
-    return hmac.new(key, str(exp).encode(), hashlib.sha256).hexdigest()
+def db(sql, args=(), one=False):
+    global _conn
+    sql = sql.replace("?", PH)
+    with _db_lock:
+        for attempt in (0, 1):
+            try:
+                if _conn is None:
+                    _conn = _connect()
+                cur = _conn.execute(sql, args)
+                rows = cur.fetchall() if cur.description else []
+                return (rows[0] if rows else None) if one else rows
+            except Exception:
+                if attempt or not _is_conn_error():
+                    raise
+                _conn = None
 
 
-def make_token():
-    exp = int(time.time()) + SESSION_DAYS * 86400
-    return f"{exp}.{_sign(exp)}"
-
-
-def valid_token(tok):
-    if not OWNER_PASSWORD or not tok or "." not in tok:
+def _is_conn_error():
+    try:
+        _conn.execute("SELECT 1")
         return False
-    exp, sig = tok.split(".", 1)
-    return exp.isdigit() and int(exp) > time.time() and hmac.compare_digest(sig, _sign(int(exp)))
+    except Exception:
+        return True
 
 
-def check_password(pw):
-    a = hashlib.sha256(pw.encode()).digest()
-    b = hashlib.sha256(OWNER_PASSWORD.encode()).digest()
-    return bool(OWNER_PASSWORD) and hmac.compare_digest(a, b)
+def init_db():
+    db(f"""CREATE TABLE IF NOT EXISTS users (
+        id {ID_COL}, email TEXT UNIQUE NOT NULL, pw_hash TEXT NOT NULL, created BIGINT NOT NULL,
+        broker TEXT, autopilot TEXT, updated BIGINT)""")
 
 
-def too_many_fails(ip):
+EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]+\.[^@\s]{2,}$")
+PBKDF2_ROUNDS = 240_000
+_fails, _signups = {}, {}
+
+
+def hash_password(pw, salt=None, rounds=PBKDF2_ROUNDS):
+    salt = salt or secrets.token_hex(16)
+    h = hashlib.pbkdf2_hmac("sha256", pw.encode(), bytes.fromhex(salt), rounds).hex()
+    return f"pbkdf2${rounds}${salt}${h}"
+
+
+def verify_password(pw, stored):
+    try:
+        _, rounds, salt, _h = stored.split("$")
+        return hmac.compare_digest(hash_password(pw, salt, int(rounds)), stored)
+    except ValueError:
+        return False
+
+
+def _sign(uid, exp, pw_hash):
+    # tied to the password hash, so changing a password logs out old sessions
+    return hmac.new(SESSION_SECRET, f"{uid}.{exp}.{pw_hash[-24:]}".encode(), hashlib.sha256).hexdigest()
+
+
+def make_token(uid, pw_hash):
+    exp = int(time.time()) + SESSION_DAYS * 86400
+    return f"{uid}.{exp}.{_sign(uid, exp, pw_hash)}"
+
+
+def user_from_token(tok):
+    parts = (tok or "").split(".")
+    if len(parts) != 3 or not parts[0].isdigit() or not parts[1].isdigit() or int(parts[1]) < time.time():
+        return None
+    row = db("SELECT id, email, pw_hash FROM users WHERE id = ?", (int(parts[0]),), one=True)
+    if row and hmac.compare_digest(parts[2], _sign(row[0], int(parts[1]), row[2])):
+        return {"id": row[0], "email": row[1]}
+    return None
+
+
+def rate_limited(store, ip, limit, window):
     now = time.time()
-    _fails[ip] = [t for t in _fails.get(ip, []) if now - t < 900]
-    return len(_fails[ip]) >= 5
+    store[ip] = [t for t in store.get(ip, []) if now - t < window]
+    return len(store[ip]) >= limit
 
 
 # ---------------------------------------------------------------- David autopilot
@@ -522,8 +586,13 @@ class Handler(SimpleHTTPRequestHandler):
                 return v
         return None
 
-    def is_owner(self):
-        return valid_token(self.cookie(COOKIE))
+    def user(self):
+        if not hasattr(self, "_user"):
+            try:
+                self._user = user_from_token(self.cookie(COOKIE))
+            except Exception:
+                self._user = None
+        return self._user
 
     def client_ip(self):
         return (self.headers.get("X-Forwarded-For") or self.client_address[0]).split(",")[0].strip()
@@ -567,7 +636,7 @@ class Handler(SimpleHTTPRequestHandler):
         if (self.headers.get("Content-Type") or "").split(";")[0].strip() != "application/json":
             raise ValueError("Content-Type must be application/json")
         n = int(self.headers.get("Content-Length") or 0)
-        if n > 200_000:
+        if n > 2_000_000:
             raise ValueError("Request too large")
         return json.loads(self.rfile.read(n) or b"{}")
 
@@ -577,22 +646,21 @@ class Handler(SimpleHTTPRequestHandler):
             body = self.read_json()
         except Exception as e:
             return self.send_json({"error": str(e)}, 400)
-        if u.path == "/api/login":
-            if not OWNER_PASSWORD:
-                return self.send_json({"error": "The owner area is not set up yet."}, 503)
-            ip = self.client_ip()
-            if too_many_fails(ip):
-                return self.send_json({"error": "Too many wrong attempts. Try again in 15 minutes."}, 429)
-            if not check_password(str(body.get("password", ""))):
-                _fails.setdefault(ip, []).append(time.time())
-                time.sleep(0.5)
-                return self.send_json({"error": "Wrong password."}, 401)
-            _fails.pop(ip, None)
-            return self.send_json_cookie({"ok": True}, self.set_session(make_token(), SESSION_DAYS * 86400))
+        if u.path in ("/api/register", "/api/login"):
+            return self.auth(u.path == "/api/register", body)
         if u.path == "/api/logout":
             return self.send_json_cookie({"ok": True}, self.set_session("", 0))
+        if u.path == "/api/state":
+            user = self.user()
+            if not user:
+                return self.send_json({"error": "Login required"}, 401)
+            sets = {k: json.dumps(body[k]) if body[k] is not None else None for k in ("broker", "autopilot") if k in body}
+            if sets:
+                cols = ", ".join(f"{k} = ?" for k in sets)
+                db(f"UPDATE users SET {cols}, updated = ? WHERE id = ?", (*sets.values(), int(time.time()), user["id"]))
+            return self.send_json({"ok": True})
         if u.path == "/api/autopilot/plan":
-            if not self.is_owner():
+            if not self.user():
                 return self.send_json({"error": "Login required"}, 401)
             try:
                 cash = max(0.0, float(body.get("cash", 0)))
@@ -606,18 +674,59 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_json({"error": f"Data source error: {e}"}, 502)
         return self.send_json({"error": "not found"}, 404)
 
+    def auth(self, register, body):
+        ip = self.client_ip()
+        email = str(body.get("email", "")).strip().lower()
+        pw = str(body.get("password", ""))
+        try:
+            if register:
+                if not EMAIL_RE.match(email) or len(email) > 254:
+                    return self.send_json({"error": "Please enter a valid email address."}, 400)
+                if len(pw) < 8 or len(pw) > 200:
+                    return self.send_json({"error": "Password must be at least 8 characters."}, 400)
+                if rate_limited(_signups, ip, 10, 3600):
+                    return self.send_json({"error": "Too many new accounts from your network. Try again later."}, 429)
+                if db("SELECT id FROM users WHERE email = ?", (email,), one=True):
+                    return self.send_json({"error": "An account with this email already exists. Log in instead."}, 409)
+                pw_hash = hash_password(pw)
+                row = db("INSERT INTO users (email, pw_hash, created) VALUES (?, ?, ?) RETURNING id",
+                         (email, pw_hash, int(time.time())), one=True)
+                _signups.setdefault(ip, []).append(time.time())
+            else:
+                if rate_limited(_fails, ip, 8, 900):
+                    return self.send_json({"error": "Too many wrong attempts. Try again in 15 minutes."}, 429)
+                row = db("SELECT id, pw_hash FROM users WHERE email = ?", (email,), one=True)
+                if not row or not verify_password(pw, row[1]):
+                    _fails.setdefault(ip, []).append(time.time())
+                    time.sleep(0.5)
+                    return self.send_json({"error": "Wrong email or password."}, 401)
+                pw_hash = row[1]
+                _fails.pop(ip, None)
+        except Exception as e:
+            return self.send_json({"error": f"Account database unavailable: {type(e).__name__}"}, 503)
+        token = make_token(row[0], pw_hash)
+        return self.send_json_cookie({"ok": True, "email": email}, self.set_session(token, SESSION_DAYS * 86400))
+
     def do_GET(self):
         u = urllib.parse.urlparse(self.path)
         if u.path in ("/david", "/david/"):
-            if not self.is_owner():
+            if not self.user():
                 return self.redirect("/login.html?next=/david")
             return self.serve_private("david.html")
         if u.path.startswith("/private/"):
-            if not self.is_owner():
+            if not self.user():
                 return self.send_json({"error": "Login required"}, 401)
             return self.serve_private(u.path[len("/private/"):])
         if u.path == "/api/me":
-            return self.send_json({"owner": self.is_owner(), "configured": bool(OWNER_PASSWORD)})
+            user = self.user()
+            return self.send_json({"user": {"email": user["email"]} if user else None})
+        if u.path == "/api/state":
+            user = self.user()
+            if not user:
+                return self.send_json({"error": "Login required"}, 401)
+            row = db("SELECT broker, autopilot FROM users WHERE id = ?", (user["id"],), one=True)
+            return self.send_json({"broker": json.loads(row[0]) if row[0] else None,
+                                   "autopilot": json.loads(row[1]) if row[1] else None})
         if not u.path.startswith("/api/"):
             return super().do_GET()
         q = {k: v[0] for k, v in urllib.parse.parse_qs(u.query).items()}
@@ -646,5 +755,6 @@ class Handler(SimpleHTTPRequestHandler):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8000"))
+    init_db()
     print(f"David Trading running on http://localhost:{port}")
     ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()

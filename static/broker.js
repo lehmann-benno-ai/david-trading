@@ -2,10 +2,18 @@
 const KEY = "davidDemoBroker";
 const usd = (n) => n == null || isNaN(n) ? "—" : (n < 0 ? "-$" : "$") + Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const shr = (n) => Number(n).toLocaleString("en-US", { maximumFractionDigits: 4 });
+const AP_KEY = "davidAutopilot";
+const account = { user: null, chain: Promise.resolve() };
+/* logged-in users: every change is also saved to their account on the server, in order */
+function pushState(obj) {
+  if (!account.user) return;
+  account.chain = account.chain.then(() => fetch("/api/state", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(obj), keepalive: true })
+    .then((r) => { if (!r.ok) throw new Error(r.status); }).catch(() => toast("Couldn't save to your account. Check your connection.", true)));
+}
 const broker = {
   acct: JSON.parse(localStorage.getItem(KEY) || "null"),
   quotes: {},
-  save() { localStorage.setItem(KEY, JSON.stringify(this.acct)); },
+  save() { localStorage.setItem(KEY, JSON.stringify(this.acct)); pushState({ broker: this.acct }); },
 };
 
 function toast(msg, bad = false) {
@@ -238,7 +246,7 @@ $("acct-btn").addEventListener("click", () => {
 $("pf-dlg").addEventListener("click", (e) => { if (e.target.closest("[data-close-pf]")) $("pf-dlg").close(); });
 $("pf-reset").addEventListener("click", () => {
   if (!confirm("Reset your demo account? All demo positions and history will be deleted.")) return;
-  broker.acct = null; localStorage.removeItem(KEY);
+  broker.acct = null; broker.save();
   $("pf-dlg").close(); refreshAccountButton();
   openSetup(() => { $("pf-dlg").showModal(); renderPortfolio(); });
 });
@@ -246,13 +254,46 @@ $("pf-reset").addEventListener("click", () => {
 refreshAccountButton();
 setInterval(() => { refreshAccountButton(); if ($("pf-dlg").open) renderPortfolio(); }, 30000);
 
-/* owner-only David Autopilot entry point */
-api("/api/me").then((me) => {
-  if (me.owner) {
-    const a = document.createElement("a");
-    a.href = "/david"; a.className = "ap-link"; a.innerHTML = '<span class="ap-dot" aria-hidden="true"></span>David Autopilot';
-    $("acct-btn").before(a);
-  } else if (me.configured) {
-    document.querySelector(".disclaimer").insertAdjacentHTML("beforeend", ' <a class="owner-link" href="/login.html">Owner login</a>');
+/* accounts: load the logged-in user's saved demo money, show login / user menu */
+async function logout() {
+  await fetch("/api/logout", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  localStorage.removeItem(KEY); localStorage.removeItem(AP_KEY);
+  location.reload();
+}
+
+function renderUserArea(user) {
+  const area = document.createElement("div");
+  area.className = "user-area";
+  if (!user) {
+    area.innerHTML = '<a class="btn-ghost login-link" href="/login.html">Log in / Sign up</a>';
+  } else {
+    area.innerHTML = `<a href="/david" class="ap-link"><span class="ap-dot" aria-hidden="true"></span>David Autopilot</a>
+      <div class="user-menu"><button class="user-btn" id="user-btn" aria-haspopup="true" aria-expanded="false" title="${esc(user.email)}">${esc(user.email[0].toUpperCase())}</button>
+      <div class="user-pop" id="user-pop" hidden><div class="muted">Logged in as</div><b>${esc(user.email)}</b><a class="btn-ghost" href="/david">David Autopilot</a><button class="btn-ghost" id="logout-btn">Log out</button></div></div>`;
   }
-}).catch(() => {});
+  $("acct-btn").before(area);
+  if (user) {
+    const pop = $("user-pop"), btn = $("user-btn");
+    btn.addEventListener("click", (e) => { e.stopPropagation(); pop.hidden = !pop.hidden; btn.setAttribute("aria-expanded", String(!pop.hidden)); });
+    document.addEventListener("click", (e) => { if (!pop.contains(e.target)) { pop.hidden = true; btn.setAttribute("aria-expanded", "false"); } });
+    $("logout-btn").addEventListener("click", logout);
+  }
+}
+
+(async () => {
+  let me;
+  try { me = await api("/api/me"); } catch { return; }
+  if (me.user) {
+    try {
+      const st = await api("/api/state");
+      account.user = me.user;
+      if (st.broker) { broker.acct = st.broker; localStorage.setItem(KEY, JSON.stringify(st.broker)); }
+      else if (broker.acct) pushState({ broker: broker.acct });
+      const localAp = JSON.parse(localStorage.getItem(AP_KEY) || "null");
+      if (st.autopilot) localStorage.setItem(AP_KEY, JSON.stringify(st.autopilot));
+      else if (localAp) pushState({ autopilot: localAp });
+      refreshAccountButton();
+    } catch { toast("Couldn't load your account. Your demo money is shown from this browser only.", true); }
+  }
+  renderUserArea(me.user);
+})();

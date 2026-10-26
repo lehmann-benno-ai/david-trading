@@ -12,7 +12,13 @@ const vcls = (v) => v.includes("BUY") ? "b-buy" : v.includes("SELL") ? "b-sell" 
 const load = (k) => JSON.parse(localStorage.getItem(k) || "null");
 let ap = load(AP_KEY) || { cash: 0, funded: 0, positions: {}, history: [], runs: [], snapshots: [], risk: "balanced", auto: false, lastRun: 0, verdicts: {} };
 let quotes = {}, running = false;
-const save = () => localStorage.setItem(AP_KEY, JSON.stringify(ap));
+let chain = Promise.resolve();
+function pushState(obj) {
+  chain = chain.then(() => fetch("/api/state", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(obj), keepalive: true })
+    .then((r) => { if (r.status === 401) location.href = "/login.html?next=/david"; else if (!r.ok) throw new Error(r.status); })
+    .catch(() => toast("Couldn't save to your account. Check your connection.", true)));
+}
+const save = () => { localStorage.setItem(AP_KEY, JSON.stringify(ap)); pushState({ autopilot: ap }); };
 
 function toast(msg, bad = false) {
   const t = $("toast"); t.textContent = msg; t.style.borderLeftColor = bad ? "var(--down)" : "var(--up)";
@@ -56,7 +62,9 @@ function moveMoney(amount, toDavid) {
     if (amount > ap.cash + 0.005) throw new Error(`David's fund only has ${usd(ap.cash)} in cash. Sell positions first.`);
     ap.cash -= amount; ap.funded = Math.max(0, ap.funded - amount); main.cash += amount;
   }
-  localStorage.setItem(MAIN_KEY, JSON.stringify(main)); save();
+  localStorage.setItem(MAIN_KEY, JSON.stringify(main));
+  localStorage.setItem(AP_KEY, JSON.stringify(ap));
+  pushState({ broker: main, autopilot: ap });
 }
 $("ap-give").addEventListener("click", () => {
   showErr();
@@ -131,7 +139,11 @@ async function runDavid() {
 $("ap-run").addEventListener("click", runDavid);
 $("ap-auto").addEventListener("change", (e) => { ap.auto = e.target.checked; save(); render(); if (ap.auto && Date.now() - ap.lastRun > RUN_EVERY) runDavid(); });
 $("ap-risk").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; ap.risk = b.dataset.risk; save(); render(); toast(`Risk level set to ${b.querySelector("b").textContent}. David uses it on his next check.`); });
-$("logout").addEventListener("click", async () => { await fetch("/api/logout", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); location.href = "/"; });
+$("logout").addEventListener("click", async () => {
+  await chain;
+  await fetch("/api/logout", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  localStorage.removeItem(MAIN_KEY); localStorage.removeItem(AP_KEY); location.href = "/";
+});
 
 /* ---------- rendering ---------- */
 const chart = LightweightCharts.createChart($("ap-chart"), {
@@ -176,6 +188,17 @@ function render() {
   document.querySelectorAll("#ap-risk button").forEach((b) => b.classList.toggle("active", b.dataset.risk === ap.risk));
 }
 
-render();
-refreshQuotes().then(() => { if (ap.auto && Date.now() - ap.lastRun > RUN_EVERY) runDavid(); });
+(async () => {
+  try {
+    const [me, st] = await Promise.all([api("/api/me"), api("/api/state")]);
+    $("user-email").textContent = me.user ? me.user.email : "";
+    if (st.broker) localStorage.setItem(MAIN_KEY, JSON.stringify(st.broker));
+    else if (load(MAIN_KEY)) pushState({ broker: load(MAIN_KEY) });
+    if (st.autopilot) ap = st.autopilot; else if (load(AP_KEY)) save();
+    localStorage.setItem(AP_KEY, JSON.stringify(ap));
+  } catch (e) { showErr("Couldn't load your account: " + e.message); }
+  render();
+  await refreshQuotes();
+  if (ap.auto && Date.now() - ap.lastRun > RUN_EVERY) runDavid();
+})();
 setInterval(() => { refreshQuotes(); if (ap.auto && !running && Date.now() - ap.lastRun > RUN_EVERY) runDavid(); }, 60000);
