@@ -263,11 +263,13 @@ def get_buzz(symbol):
             news = fn.result()
         except Exception:
             news = []
+        social_error = None
         try:
             social = fs.result()
-        except Exception:
-            social = None
-    return {"symbol": symbol, "name": name, "news": news, "social": social, "summary": summarize_buzz(news, social)}
+        except Exception as e:
+            social, social_error = None, str(e)[:120]
+    return {"symbol": symbol, "name": name, "news": news, "social": social, "social_error": social_error,
+            "summary": summarize_buzz(news, social)}
 
 
 def get_world():
