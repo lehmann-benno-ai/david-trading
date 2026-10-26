@@ -53,6 +53,7 @@ function portfolioTotals() {
 async function refreshAccountButton() {
   if (!broker.acct) { $("acct-value").textContent = "Start demo trading"; return; }
   try { await fetchQuotes([...Object.keys(broker.acct.positions), ...davidFund().syms]); } catch {}
+  updatePositionLines();
   const t = portfolioTotals();
   $("acct-value").innerHTML = `${usd(t.total)} <span class="${cls(t.pl)}">${fmtPct(t.plPct)}</span>`;
 }
@@ -162,35 +163,114 @@ function updateOrderSummary() {
     <dt>You own</dt><dd>${shr(owned)} shares</dd>`;
 }
 
+/* executes a demo order at the latest price; returns the filled shares and USD total */
+async function trade(side, symbol, shares, fallbackQuote) {
+  const q = (await fetchQuotes([symbol]))[symbol] || fallbackQuote;
+  if (!q) throw new Error("No price available right now. Try again.");
+  const sh = Math.round(shares * 1e6) / 1e6, total = sh * q.priceUsd;
+  const a = broker.acct, pos = a.positions[symbol];
+  if (!(sh > 0)) throw new Error("Enter an amount.");
+  if (side === "buy") {
+    if (total > a.cash + 0.005) throw new Error("Not enough demo cash.");
+    a.cash = Math.max(0, a.cash - total);
+    const p = pos || { shares: 0, cost: 0, costNative: 0, opened: Date.now(), name: q.name };
+    if (p.costNative != null) p.costNative += sh * q.price;
+    p.shares += sh; p.cost += total; p.name = q.name;
+    a.positions[symbol] = p;
+    a.history.unshift({ t: Date.now(), side: "buy", symbol, shares: sh, price: q.price, currency: q.currency, total });
+  } else {
+    if (!pos || sh > pos.shares + 1e-9) throw new Error("You don't own that many shares.");
+    const frac = Math.min(1, sh / pos.shares), costPart = pos.cost * frac;
+    a.cash += total;
+    if (pos.costNative != null) pos.costNative -= pos.costNative * frac;
+    pos.shares -= sh; pos.cost -= costPart;
+    if (pos.shares < 1e-6) delete a.positions[symbol];
+    a.history.unshift({ t: Date.now(), side: "sell", symbol, shares: sh, price: q.price, currency: q.currency, total, pl: total - costPart });
+  }
+  broker.save();
+  refreshAccountButton();
+  updatePositionLines();
+  if ($("pf-dlg").open) renderPortfolio();
+  return { sh, total };
+}
+
 $("order-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const btn = $("order-submit"); btn.disabled = true;
   try {
-    const q = (await fetchQuotes([order.symbol]))[order.symbol] || order.quote;
-    order.quote = q;
-    const sh = Math.round(orderShares() * 1e6) / 1e6, total = sh * q.priceUsd;
-    const a = broker.acct, pos = a.positions[order.symbol];
-    if (order.side === "buy") {
-      if (total > a.cash + 0.005) throw new Error("Not enough demo cash.");
-      a.cash = Math.max(0, a.cash - total);
-      const p = pos || { shares: 0, cost: 0, name: q.name };
-      p.shares += sh; p.cost += total; p.name = q.name;
-      a.positions[order.symbol] = p;
-    } else {
-      if (!pos || sh > pos.shares + 1e-9) throw new Error("You don't own that many shares.");
-      const costPart = pos.cost * (sh / pos.shares);
-      a.cash += total;
-      pos.shares -= sh; pos.cost -= costPart;
-      if (pos.shares < 1e-6) delete a.positions[order.symbol];
-      a.history.unshift({ t: Date.now(), side: "sell", symbol: order.symbol, shares: sh, price: q.price, currency: q.currency, total, pl: total - costPart });
-    }
-    if (order.side === "buy") a.history.unshift({ t: Date.now(), side: "buy", symbol: order.symbol, shares: sh, price: q.price, currency: q.currency, total });
-    broker.save();
+    const { sh, total } = await trade(order.side, order.symbol, orderShares(), order.quote);
     $("order-dlg").close();
     toast(`${order.side === "buy" ? "Bought" : "Sold"} ${shr(sh)} ${label(order.symbol)} for ${usd(total)} (demo)`);
-    refreshAccountButton();
-    if ($("pf-dlg").open) renderPortfolio();
   } catch (err) { $("order-err").textContent = err.message; btn.disabled = false; }
+});
+
+/* ---------- position lines on the chart: live P/L at the buy price (with close X) + yellow buy-date line ---------- */
+const posLayer = document.createElement("div");
+posLayer.className = "pos-layer";
+posLayer.innerHTML = `<div class="buy-vline" hidden><span></span></div>
+  <div class="pl-line" hidden><div class="pl-tag"><span class="pl-txt"></span><button type="button" class="pl-x" title="Close position (sell everything, demo)" aria-label="Close position">✕</button></div></div>`;
+$("chart").appendChild(posLayer);
+const plLine = posLayer.querySelector(".pl-line"), buyLine = posLayer.querySelector(".buy-vline");
+let posView = null;
+
+/* when the current position was opened; older positions without `opened` are rebuilt from the trade history */
+function openedAt(sym, p) {
+  if (p.opened) return p.opened;
+  let net = p.shares, t = null;
+  for (const h of broker.acct.history) {
+    if (h.symbol !== sym) continue;
+    if (h.side === "buy") { net -= h.shares; t = h.t; } else net += h.shares;
+    if (net <= 1e-6) break;
+  }
+  return t;
+}
+
+function updatePositionLines() {
+  const sym = state.symbol, p = broker.acct?.positions[sym], q = broker.quotes[sym];
+  if (!p || !q || !state.candles.length) { posView = null; plLine.hidden = buyLine.hidden = true; return; }
+  const entry = p.costNative ? p.costNative / p.shares : (p.cost / p.shares) * (q.price / q.priceUsd);
+  const pl = p.shares * q.priceUsd - p.cost, plPct = (p.shares * q.priceUsd / p.cost - 1) * 100;
+  const opened = openedAt(sym, p), ts = opened / 1000, c = state.candles;
+  let barTime = null;
+  if (opened) for (let i = c.length - 1; i >= 0; i--) if (c[i].time <= ts) { barTime = c[i].time; break; }
+  posView = { entry, barTime };
+  plLine.classList.toggle("loss", pl < 0);
+  posLayer.querySelector(".pl-txt").innerHTML = `${shr(p.shares)} shares @ ${fmt(entry)} · <b>${pl >= 0 ? "+" : ""}${usd(pl)} (${fmtPct(plPct)})</b>`;
+  buyLine.querySelector("span").textContent = opened ? `Bought ${new Date(opened).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}` : "";
+  placePositionLines();
+}
+
+function placePositionLines() {
+  if (!posView) return;
+  const el = $("chart"), right = chart.priceScale("right").width(), h = el.clientHeight - chart.timeScale().height(), w = el.clientWidth - right;
+  const y = candleS.priceToCoordinate(posView.entry);
+  plLine.hidden = y == null;
+  if (!plLine.hidden) {
+    // buy price outside the visible range: pin the P/L tag to the top/bottom edge
+    const off = y < 14 ? "above" : y > h - 14 ? "below" : "";
+    plLine.dataset.off = off;
+    plLine.style.top = `${off === "above" ? 14 : off === "below" ? h - 14 : y}px`;
+    plLine.style.right = `${right}px`;
+  }
+  const x = posView.barTime == null ? null : chart.timeScale().timeToCoordinate(posView.barTime);
+  buyLine.hidden = x == null || x < 0 || x > w;
+  if (!buyLine.hidden) { buyLine.style.left = `${x}px`; buyLine.style.height = `${h}px`; buyLine.classList.toggle("flip", x > w - 130); }
+}
+(function follow() { placePositionLines(); requestAnimationFrame(follow); })();
+
+document.addEventListener("chartloaded", async () => {
+  const sym = state.symbol;
+  if (broker.acct?.positions[sym] && !broker.quotes[sym]) { try { await fetchQuotes([sym]); } catch {} }
+  updatePositionLines();
+});
+
+posLayer.querySelector(".pl-x").addEventListener("click", async () => {
+  const sym = state.symbol, p = broker.acct?.positions[sym];
+  if (!p || !confirm(`Close your ${label(sym)} position?\n\nThis sells all ${shr(p.shares)} shares at the current price (demo money).`)) return;
+  try {
+    const { sh, total } = await trade("sell", sym, p.shares);
+    toast(`Closed: sold ${shr(sh)} ${label(sym)} for ${usd(total)} (demo)`);
+  } catch (err) { toast(err.message, true); }
 });
 
 document.addEventListener("click", (e) => {

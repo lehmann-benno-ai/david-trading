@@ -130,6 +130,7 @@ async function loadChart() {
     ["History", `${new Date(first * 1000).toLocaleDateString("en-US", { month: "short", year: "numeric" })} →`],
   ].map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
   document.title = `${label(d.symbol)} ${fmt(price)} — David Trading`;
+  document.dispatchEvent(new Event("chartloaded"));
 }
 
 $("ranges").addEventListener("click", (e) => {
