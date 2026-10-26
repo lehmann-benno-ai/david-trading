@@ -181,7 +181,10 @@ async function loadBuzz(sym, tab) {
         <span class="sent-l">StockTwits</span><span class="sent-bar"><i style="width:${bullPct}%"></i></span><span class="up">${bullPct}% bullish</span><span class="down">${100 - bullPct}% bearish</span></a>` : "";
     const tone = (t) => t > 0 ? '<i class="nt up" title="Positive headline">▲</i>' : t < 0 ? '<i class="nt down" title="Negative headline">▼</i>' : '<i class="nt" title="Neutral headline">●</i>';
     const news = b.news.length ? `<ul class="news">${b.news.map((n) => `<li>${tone(n.tone)}<a href="${esc(n.link)}" target="_blank" rel="noopener">${esc(n.title)}</a><span class="muted">${esc(n.source)}${n.time ? " · " + ago(n.time) : ""}</span></li>`).join("")}</ul>` : '<p class="muted">No headlines this week.</p>';
-    body().innerHTML = `<p class="buzz-sum">${esc(b.summary.text)}</p>${social}${news}<p class="muted buzz-note">Headlines from Google News${s ? ", posts from StockTwits" : ""}. Shown for context; they don't change David's verdict.</p>`;
+    const k = b.bluesky, sky = k && k.posts.length ? `<div class="sky-head"><b>On social media</b><a class="muted" href="${esc(k.url)}" target="_blank" rel="noopener">Bluesky · ${esc(k.query)} ↗</a></div>
+      <ul class="news sky">${k.posts.map((p) => `<li>${tone(p.tone)}<a href="${esc(p.link)}" target="_blank" rel="noopener">${esc(p.text)}</a><span class="muted">@${esc(p.author)}${p.time ? " · " + ago(Date.parse(p.time) / 1000) : ""}</span></li>`).join("")}</ul>` : "";
+    const srcs = ["Google News", s && "StockTwits", k && "Bluesky"].filter(Boolean).join(", ");
+    body().innerHTML = `<p class="buzz-sum">${esc(b.summary.text)}</p>${social}${news}${sky}<p class="muted buzz-note">From ${srcs}. Shown for context; they don't change David's verdict.</p>`;
   } catch (e) { if (id === buzzReq && body()) body().innerHTML = `<span class="muted">Couldn't load news: ${esc(e.message)}</span>`; }
 }
 document.addEventListener("click", (e) => { const b = e.target.closest("#buzz [data-bt]"); if (b) loadBuzz(state.symbol, b.dataset.bt); });

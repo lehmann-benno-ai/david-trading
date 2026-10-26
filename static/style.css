@@ -230,3 +230,5 @@ a.btn-ghost,a.brand{color:var(--text);text-decoration:none}
 .news .muted{font-size:11px}
 .nt{position:absolute;left:0;top:7px;font-style:normal;font-size:9px;color:var(--muted)}
 .buzz-note{margin:6px 0 0;font-size:10.5px}
+.sky-head{display:flex;align-items:center;justify-content:space-between;margin:10px 0 4px;font-size:11.5px}.sky-head a{font-size:10.5px;text-decoration:none}
+.news.sky a{color:var(--muted);font-size:12px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;word-break:break-word}

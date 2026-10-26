@@ -239,7 +239,38 @@ def stocktwits(symbol):
             "url": f"https://stocktwits.com/symbol/{sym}"}
 
 
-def summarize_buzz(news, social):
+SOCIAL_POS = POS_WORDS | {"calls", "long", "buy", "buying", "bought", "moon", "breakout", "undervalued", "loading", "adding", "ath"}
+SOCIAL_NEG = NEG_WORDS | {"puts", "short", "shorting", "sell", "selling", "sold", "overvalued", "bubble", "dump", "dumping", "rug"}
+
+
+def bluesky(symbol, name):
+    if symbol.startswith("^"):
+        q = name
+    elif symbol.endswith("-USD"):
+        q = "$" + symbol[:-4]
+    elif "." in symbol or "=" in symbol:
+        q = name
+    else:
+        q = "$" + symbol
+    url = f"https://api.bsky.app/xrpc/app.bsky.feed.searchPosts?q={urllib.parse.quote(q)}&limit=30&sort=latest&lang=en"
+    posts = json.loads(fetch_text(url, 300)).get("posts") or []
+    out, pos, neg = [], 0, 0
+    for p in posts:
+        text = ((p.get("record") or {}).get("text") or "").strip()
+        if not text:
+            continue
+        words = set(re.findall(r"[a-z][a-z\-]+", text.lower()))
+        t = len(words & SOCIAL_POS) - len(words & SOCIAL_NEG)
+        pos, neg = pos + (t > 0), neg + (t < 0)
+        handle = (p.get("author") or {}).get("handle", "")
+        out.append({"text": text[:240], "author": handle, "tone": t, "likes": p.get("likeCount", 0),
+                    "time": (p.get("record") or {}).get("createdAt"),
+                    "link": f"https://bsky.app/profile/{handle}/post/{p.get('uri', '').rsplit('/', 1)[-1]}"})
+    return {"query": q, "count": len(out), "positive": pos, "negative": neg, "posts": out[:4],
+            "url": f"https://bsky.app/search?q={urllib.parse.quote(q)}"}
+
+
+def summarize_buzz(news, social, sky=None):
     tone = sum(1 if n["tone"] > 0 else -1 if n["tone"] < 0 else 0 for n in news)
     parts = []
     if news:
@@ -247,6 +278,9 @@ def summarize_buzz(news, social):
     if social and social["bullish"] + social["bearish"] >= 3:
         b = social["bullish"] / (social["bullish"] + social["bearish"]) * 100
         parts.append(f"{b:.0f}% of tagged StockTwits posts are bullish")
+    if sky and sky["positive"] + sky["negative"] >= 3:
+        parts.append("Bluesky chatter leans positive" if sky["positive"] > sky["negative"] * 1.5 else
+                     "Bluesky chatter leans negative" if sky["negative"] > sky["positive"] * 1.5 else "Bluesky chatter is mixed")
     return {"tone": tone, "text": "; ".join(parts) + "." if parts else "Not much buzz right now."}
 
 
@@ -256,9 +290,14 @@ def get_buzz(symbol):
     except Exception:
         name = symbol
     query = f'"{name}" when:7d' if name and name != symbol else f"{symbol} stock when:7d"
-    with ThreadPoolExecutor(max_workers=2) as ex:
+    with ThreadPoolExecutor(max_workers=3) as ex:
         fn = ex.submit(google_news, query)
         fs = ex.submit(stocktwits, symbol)
+        fb = ex.submit(bluesky, symbol, name)
+        try:
+            sky = fb.result()
+        except Exception:
+            sky = None
         try:
             news = fn.result()
         except Exception:
@@ -268,8 +307,8 @@ def get_buzz(symbol):
             social = fs.result()
         except Exception as e:
             social, social_error = None, str(e)[:120]
-    return {"symbol": symbol, "name": name, "news": news, "social": social, "social_error": social_error,
-            "summary": summarize_buzz(news, social)}
+    return {"symbol": symbol, "name": name, "news": news, "social": social, "bluesky": sky,
+            "summary": summarize_buzz(news, social, sky)}
 
 
 def get_world():
