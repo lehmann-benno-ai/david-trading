@@ -21,6 +21,9 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "")
 SESSION_SECRET = (os.environ.get("SESSION_SECRET") or secrets.token_hex(32)).encode()
 SESSION_DAYS = 30
 COOKIE = "dt_session"
+OWNER_COOKIE = "dt_owner"
+# PBKDF2 hash of the separate owner-only Autopilot password; unset = Autopilot locked for everyone
+OWNER_HASH = os.environ.get("AUTOPILOT_PASSWORD_HASH", "")
 UA = {"User-Agent": "Mozilla/5.0"}  # fuller browser UAs get HTTP 429 from Yahoo
 YF = "https://query1.finance.yahoo.com"
 
@@ -575,7 +578,7 @@ def init_db():
 
 EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]+\.[^@\s]{2,}$")
 PBKDF2_ROUNDS = 240_000
-_fails, _signups = {}, {}
+_fails, _signups, _owner_fails = {}, {}, {}
 
 
 def hash_password(pw, salt=None, rounds=PBKDF2_ROUNDS):
@@ -610,6 +613,20 @@ def user_from_token(tok):
     if row and hmac.compare_digest(parts[2], _sign(row[0], int(parts[1]), row[2])):
         return {"id": row[0], "email": row[1]}
     return None
+
+
+def _owner_sig(exp):
+    return hmac.new(SESSION_SECRET, f"owner.{exp}.{OWNER_HASH[-24:]}".encode(), hashlib.sha256).hexdigest()
+
+
+def make_owner_token():
+    exp = int(time.time()) + SESSION_DAYS * 86400
+    return f"{exp}.{_owner_sig(exp)}"
+
+
+def owner_token_ok(tok):
+    exp, _, sig = (tok or "").partition(".")
+    return bool(OWNER_HASH) and exp.isdigit() and int(exp) > time.time() and hmac.compare_digest(sig, _owner_sig(int(exp)))
 
 
 def rate_limited(store, ip, limit, window):
@@ -749,16 +766,20 @@ class Handler(SimpleHTTPRequestHandler):
     def client_ip(self):
         return (self.headers.get("X-Forwarded-For") or self.client_address[0]).split(",")[0].strip()
 
-    def set_session(self, token, max_age):
+    def owner(self):
+        return owner_token_ok(self.cookie(OWNER_COOKIE))
+
+    def set_session(self, token, max_age, name=COOKIE):
         secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""
-        return f"{COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={max_age}{secure}"
+        return f"{name}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={max_age}{secure}"
 
     def send_json_cookie(self, obj, cookie, status=200):
         body = json.dumps(obj).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Set-Cookie", cookie)
+        for c in cookie if isinstance(cookie, list) else [cookie]:
+            self.send_header("Set-Cookie", c)
         self.end_headers()
         self.wfile.write(body)
 
@@ -801,7 +822,9 @@ class Handler(SimpleHTTPRequestHandler):
         if u.path in ("/api/register", "/api/login"):
             return self.auth(u.path == "/api/register", body)
         if u.path == "/api/logout":
-            return self.send_json_cookie({"ok": True}, self.set_session("", 0))
+            return self.send_json_cookie({"ok": True}, [self.set_session("", 0), self.set_session("", 0, OWNER_COOKIE)])
+        if u.path == "/api/unlock":
+            return self.unlock(body)
         if u.path == "/api/state":
             user = self.user()
             if not user:
@@ -814,6 +837,8 @@ class Handler(SimpleHTTPRequestHandler):
         if u.path == "/api/autopilot/plan":
             if not self.user():
                 return self.send_json({"error": "Login required"}, 401)
+            if not self.owner():
+                return self.send_json({"error": "Owner password required"}, 403)
             try:
                 cash = max(0.0, float(body.get("cash", 0)))
                 positions = body.get("positions") or {}
@@ -825,6 +850,19 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:
                 return self.send_json({"error": f"Data source error: {e}"}, 502)
         return self.send_json({"error": "not found"}, 404)
+
+    def unlock(self, body):
+        ip = self.client_ip()
+        if not self.user():
+            return self.send_json({"error": "Log in to your account first."}, 401)
+        if rate_limited(_owner_fails, ip, 5, 900):
+            return self.send_json({"error": "Too many wrong attempts. Try again in 15 minutes."}, 429)
+        if not OWNER_HASH or not verify_password(str(body.get("password", ""))[:200], OWNER_HASH):
+            _owner_fails.setdefault(ip, []).append(time.time())
+            time.sleep(0.5)
+            return self.send_json({"error": "Wrong password."}, 401)
+        _owner_fails.pop(ip, None)
+        return self.send_json_cookie({"ok": True}, self.set_session(make_owner_token(), SESSION_DAYS * 86400, OWNER_COOKIE))
 
     def auth(self, register, body):
         ip = self.client_ip()
@@ -864,14 +902,18 @@ class Handler(SimpleHTTPRequestHandler):
         if u.path in ("/david", "/david/"):
             if not self.user():
                 return self.redirect("/login.html?next=/david")
+            if not self.owner():
+                return self.redirect("/unlock.html")
             return self.serve_private("david.html")
         if u.path.startswith("/private/"):
             if not self.user():
                 return self.send_json({"error": "Login required"}, 401)
+            if not self.owner():
+                return self.send_json({"error": "Owner password required"}, 403)
             return self.serve_private(u.path[len("/private/"):])
         if u.path == "/api/me":
             user = self.user()
-            return self.send_json({"user": {"email": user["email"]} if user else None})
+            return self.send_json({"user": {"email": user["email"]} if user else None, "owner": bool(user) and self.owner()})
         if u.path == "/api/state":
             user = self.user()
             if not user:

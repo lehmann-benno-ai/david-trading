@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="robots" content="noindex">
+<title>Unlock David Autopilot — David Trading</title>
+<link rel="stylesheet" href="style.css">
+<link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="#131722"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
+</head>
+<body class="login-page">
+<form class="dlg login-card" id="unlock-form">
+  <a href="/" class="brand"><svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#2962ff"/><path d="M6 22l6-7 5 4 9-11" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg><span>David<b>Trading</b></span></a>
+  <h1 class="unlock-title">David Autopilot is private</h1>
+  <p class="muted">Only the owner can let David invest demo money. Enter the Autopilot password to continue.</p>
+  <label class="field">Autopilot password<input id="pw" type="password" autocomplete="current-password" required autofocus></label>
+  <p class="order-err" id="err" role="alert"></p>
+  <div class="dlg-actions"><a href="/" class="btn-ghost">Back</a><button class="btn-primary" type="submit">Unlock</button></div>
+</form>
+<script>
+const $ = (id) => document.getElementById(id);
+fetch("/api/me").then((r) => r.json()).then((j) => {
+  if (!j.user) location.href = "/login.html?next=/unlock.html";
+  else if (j.owner) location.href = "/david";
+}).catch(() => {});
+$("unlock-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("err").textContent = "";
+  try {
+    const r = await fetch("/api/unlock", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: $("pw").value }) });
+    const j = await r.json();
+    if (r.status === 401 && j.error && j.error.startsWith("Log in")) { location.href = "/login.html?next=/unlock.html"; return; }
+    if (!r.ok) throw new Error(j.error || "Unlock failed");
+    location.href = "/david";
+  } catch (x) { $("err").textContent = x.message; $("pw").select(); }
+});
+</script>
+</body>
+</html>

@@ -298,3 +298,4 @@ html{-webkit-text-size-adjust:100%}
 .dr-user.in b,.dr-user.in strong{overflow-wrap:anywhere}
 .login-link svg{display:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}
 @media (max-width:760px){.login-link{display:grid;place-items:center;width:40px;height:40px;padding:0;border-radius:50%}.login-link svg{display:block}.login-link span{display:none}}
+.unlock-title{font-size:18px;margin:4px 0 0}

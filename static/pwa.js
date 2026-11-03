@@ -79,7 +79,7 @@
           : `<a class="btn-primary dr-login" href="/login.html?next=${next}">${ic("login")}Log in / Sign up</a><small>Save your demo money and use David Autopilot on any device.</small>`}</div>
         <ul class="dr-list">
           ${item("david", "Chat with David", "Ask about any stock", {})}
-          ${item("autopilot", "David Autopilot", user ? "Let David invest your demo money" : "Log in required", { href: "/david" })}
+          ${item("autopilot", "David Autopilot", !user ? "Log in required" : user.owner ? "Let David invest your demo money" : "Owner only · password needed", { href: "/david" })}
           ${item("portfolio", "My portfolio", "Demo money, positions, trades", {})}
           ${item("chart", "Chart", "", {})}
           ${item("markets", "Markets & watchlist", "", {})}
@@ -123,7 +123,7 @@
         location.href = "/";
       } else go(k);
     });
-    fetch("/api/me").then((r) => r.json()).then((m) => { user = m.user; }).catch(() => {});
+    fetch("/api/me").then((r) => r.json()).then((m) => { user = m.user && { ...m.user, owner: m.owner }; }).catch(() => {});
   }
 
   if (!tabbar) return;

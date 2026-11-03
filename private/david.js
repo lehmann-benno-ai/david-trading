@@ -29,6 +29,7 @@ function showErr(msg) { $("ap-err").textContent = msg || ""; }
 async function api(path, body) {
   const r = await fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : undefined);
   if (r.status === 401) { location.href = "/login.html?next=/david"; throw new Error("Login required"); }
+  if (r.status === 403) { location.href = "/unlock.html"; throw new Error("Owner password required"); }
   const j = await r.json();
   if (!r.ok) throw new Error(j.error || r.statusText);
   return j;
