@@ -1,0 +1,20 @@
+{
+  "name": "David Trading",
+  "short_name": "David",
+  "description": "Stock charts, David's buy/hold/sell advice and a demo broker with play money.",
+  "id": "/",
+  "start_url": "/?app=1",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b0e14",
+  "theme_color": "#131722",
+  "icons": [
+    {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png"},
+    {"src": "/icon-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ],
+  "shortcuts": [
+    {"name": "David Autopilot", "url": "/david", "icons": [{"src": "/icon-192.png", "sizes": "192x192"}]}
+  ]
+}
