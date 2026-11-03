@@ -302,3 +302,4 @@ html{-webkit-text-size-adjust:100%}
 .link-btn{background:none;border:0;padding:4px 0;margin:-4px 0 4px;color:#5b8cff;font:inherit;font-size:13px;cursor:pointer;min-height:32px}
 .link-btn:hover{text-decoration:underline}
 .ok-msg{color:var(--up);font-size:13px;margin:6px 0 0}.ok-msg:empty{display:none}
+.field[hidden],.link-btn[hidden]{display:none}
