@@ -299,3 +299,6 @@ html{-webkit-text-size-adjust:100%}
 .login-link svg{display:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}
 @media (max-width:760px){.login-link{display:grid;place-items:center;width:40px;height:40px;padding:0;border-radius:50%}.login-link svg{display:block}.login-link span{display:none}}
 .unlock-title{font-size:18px;margin:4px 0 0}
+.link-btn{background:none;border:0;padding:4px 0;margin:-4px 0 4px;color:#5b8cff;font:inherit;font-size:13px;cursor:pointer;min-height:32px}
+.link-btn:hover{text-decoration:underline}
+.ok-msg{color:var(--up);font-size:13px;margin:6px 0 0}.ok-msg:empty{display:none}

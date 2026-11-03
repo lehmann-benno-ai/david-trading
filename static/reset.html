@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex"><meta name="referrer" content="no-referrer">
+<title>Set a new password — David Trading</title>
+<link rel="stylesheet" href="style.css">
+<link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="#131722"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
+</head>
+<body class="login-page">
+<form class="dlg login-card" id="reset-form">
+  <a href="/" class="brand"><svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#2962ff"/><path d="M6 22l6-7 5 4 9-11" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg><span>David<b>Trading</b></span></a>
+  <h1 class="unlock-title">Set a new password</h1>
+  <p class="muted">Choose a new password for your account. You'll be logged in right after.</p>
+  <label class="field">New password<input id="pw" type="password" autocomplete="new-password" minlength="8" required autofocus></label>
+  <label class="field">Repeat new password<input id="pw2" type="password" autocomplete="new-password" minlength="8" required></label>
+  <p class="order-err" id="err" role="alert"></p>
+  <div class="dlg-actions"><a href="/login.html?mode=forgot" class="btn-ghost">Send a new link</a><button class="btn-primary" type="submit" id="submit">Save password</button></div>
+</form>
+<script>
+const $ = (id) => document.getElementById(id);
+const token = new URLSearchParams(location.hash.slice(1)).get("token") || "";
+if (!token) $("err").textContent = "This reset link is incomplete. Request a new one.";
+$("reset-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("err").textContent = "";
+  if ($("pw").value !== $("pw2").value) { $("err").textContent = "The two passwords don't match."; return; }
+  $("submit").disabled = true;
+  try {
+    const r = await fetch("/api/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, password: $("pw").value }) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || "Something went wrong");
+    history.replaceState(null, "", "/reset.html");
+    location.href = "/";
+  } catch (x) { $("err").textContent = x.message; }
+  finally { $("submit").disabled = false; }
+});
+</script>
+</body>
+</html>

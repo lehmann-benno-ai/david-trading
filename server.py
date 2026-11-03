@@ -24,6 +24,10 @@ COOKIE = "dt_session"
 OWNER_COOKIE = "dt_owner"
 # PBKDF2 hash of the separate owner-only Autopilot password; unset = Autopilot locked for everyone
 OWNER_HASH = os.environ.get("AUTOPILOT_PASSWORD_HASH", "")
+BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "")
+MAIL_FROM = os.environ.get("MAIL_FROM", "")
+PUBLIC_URL = os.environ.get("PUBLIC_URL", "https://david-trading.onrender.com").rstrip("/")
+RESET_MINUTES = 60
 UA = {"User-Agent": "Mozilla/5.0"}  # fuller browser UAs get HTTP 429 from Yahoo
 YF = "https://query1.finance.yahoo.com"
 
@@ -578,7 +582,7 @@ def init_db():
 
 EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]+\.[^@\s]{2,}$")
 PBKDF2_ROUNDS = 240_000
-_fails, _signups, _owner_fails = {}, {}, {}
+_fails, _signups, _owner_fails, _resets, _reset_mails = {}, {}, {}, {}, {}
 
 
 def hash_password(pw, salt=None, rounds=PBKDF2_ROUNDS):
@@ -627,6 +631,53 @@ def make_owner_token():
 def owner_token_ok(tok):
     exp, _, sig = (tok or "").partition(".")
     return bool(OWNER_HASH) and exp.isdigit() and int(exp) > time.time() and hmac.compare_digest(sig, _owner_sig(int(exp)))
+
+
+def _reset_sig(uid, exp, pw_hash):
+    # bound to the current password hash, so a link stops working once it has been used
+    return hmac.new(SESSION_SECRET, f"reset.{uid}.{exp}.{pw_hash[-24:]}".encode(), hashlib.sha256).hexdigest()
+
+
+def make_reset_token(uid, pw_hash):
+    exp = int(time.time()) + RESET_MINUTES * 60
+    return f"{uid}.{exp}.{_reset_sig(uid, exp, pw_hash)}"
+
+
+def user_from_reset_token(tok):
+    parts = (tok or "").split(".")
+    if len(parts) != 3 or not parts[0].isdigit() or not parts[1].isdigit() or int(parts[1]) < time.time():
+        return None
+    row = db("SELECT id, email, pw_hash FROM users WHERE id = ?", (int(parts[0]),), one=True)
+    if row and hmac.compare_digest(parts[2], _reset_sig(row[0], int(parts[1]), row[2])):
+        return {"id": row[0], "email": row[1]}
+    return None
+
+
+def send_reset_email(email, link):
+    if not BREVO_API_KEY:
+        print(f"[dev] password reset link for {email}: {link}", flush=True)
+        return
+    text = (f"Hi,\n\nSomeone asked to reset the password for your David Trading account ({email}).\n\n"
+            f"Set a new password here (the link works for {RESET_MINUTES} minutes):\n{link}\n\n"
+            "If this wasn't you, just ignore this email. Your password stays the same.\n\nDavid Trading (demo money only)")
+    html = ("<div style=\"font-family:Arial,sans-serif;font-size:15px;color:#222\">"
+            f"<p>Hi,</p><p>Someone asked to reset the password for your David Trading account (<b>{email}</b>).</p>"
+            f"<p><a href=\"{link}\" style=\"display:inline-block;background:#2962ff;color:#fff;padding:10px 18px;"
+            "border-radius:6px;text-decoration:none\">Set a new password</a></p>"
+            f"<p style=\"color:#666;font-size:13px\">The link works for {RESET_MINUTES} minutes. If the button doesn't work, "
+            f"copy this into your browser:<br>{link}</p><p style=\"color:#666;font-size:13px\">If this wasn't you, "
+            "just ignore this email. Your password stays the same.</p></div>")
+    payload = {"sender": {"name": "David Trading", "email": MAIL_FROM}, "to": [{"email": email}],
+               "subject": "Reset your David Trading password", "textContent": text, "htmlContent": html}
+    req = urllib.request.Request("https://api.brevo.com/v3/smtp/email", data=json.dumps(payload).encode(),
+                                 headers={"api-key": BREVO_API_KEY, "Content-Type": "application/json",
+                                          "Accept": "application/json"})
+    try:
+        urllib.request.urlopen(req, timeout=15).read()
+    except urllib.error.HTTPError as e:
+        print(f"reset email failed: HTTP {e.code} {e.read()[:300]!r}", flush=True)
+    except Exception as e:
+        print(f"reset email failed: {type(e).__name__}", flush=True)
 
 
 def rate_limited(store, ip, limit, window):
@@ -825,6 +876,10 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json_cookie({"ok": True}, [self.set_session("", 0), self.set_session("", 0, OWNER_COOKIE)])
         if u.path == "/api/unlock":
             return self.unlock(body)
+        if u.path == "/api/forgot":
+            return self.forgot(body)
+        if u.path == "/api/reset":
+            return self.reset(body)
         if u.path == "/api/state":
             user = self.user()
             if not user:
@@ -863,6 +918,40 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json({"error": "Wrong password."}, 401)
         _owner_fails.pop(ip, None)
         return self.send_json_cookie({"ok": True}, self.set_session(make_owner_token(), SESSION_DAYS * 86400, OWNER_COOKIE))
+
+    def forgot(self, body):
+        email = str(body.get("email", "")).strip().lower()
+        if not EMAIL_RE.match(email) or len(email) > 254:
+            return self.send_json({"error": "Please enter a valid email address."}, 400)
+        if rate_limited(_resets, self.client_ip(), 5, 3600):
+            return self.send_json({"error": "Too many reset requests. Try again in an hour."}, 429)
+        _resets.setdefault(self.client_ip(), []).append(time.time())
+        try:
+            row = db("SELECT id, pw_hash FROM users WHERE email = ?", (email,), one=True)
+        except Exception as e:
+            return self.send_json({"error": f"Account database unavailable: {type(e).__name__}"}, 503)
+        # same answer whether or not the account exists, so emails can't be probed
+        if row and not rate_limited(_reset_mails, email, 3, 3600):
+            _reset_mails.setdefault(email, []).append(time.time())
+            link = f"{PUBLIC_URL}/reset.html#token={make_reset_token(row[0], row[1])}"
+            threading.Thread(target=send_reset_email, args=(email, link), daemon=True).start()
+        return self.send_json({"ok": True})
+
+    def reset(self, body):
+        pw = str(body.get("password", ""))
+        if len(pw) < 8 or len(pw) > 200:
+            return self.send_json({"error": "Password must be at least 8 characters."}, 400)
+        try:
+            user = user_from_reset_token(str(body.get("token", ""))[:300])
+            if not user:
+                return self.send_json({"error": "This reset link is invalid, expired or already used. Request a new one."}, 400)
+            pw_hash = hash_password(pw)
+            db("UPDATE users SET pw_hash = ? WHERE id = ?", (pw_hash, user["id"]))
+        except Exception as e:
+            return self.send_json({"error": f"Account database unavailable: {type(e).__name__}"}, 503)
+        _fails.pop(self.client_ip(), None)
+        return self.send_json_cookie({"ok": True, "email": user["email"]},
+                                     self.set_session(make_token(user["id"], pw_hash), SESSION_DAYS * 86400))
 
     def auth(self, register, body):
         ip = self.client_ip()

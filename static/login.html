@@ -15,9 +15,11 @@
   </div>
   <p class="muted" id="intro">Log in to get your demo money and David Autopilot on any device.</p>
   <label class="field">Email<input id="email" type="email" autocomplete="email" required autofocus></label>
-  <label class="field">Password<input id="pw" type="password" autocomplete="current-password" minlength="8" required></label>
+  <label class="field" id="pw-wrap">Password<input id="pw" type="password" autocomplete="current-password" minlength="8" required></label>
+  <button type="button" class="link-btn" id="forgot-btn">Forgot password?</button>
   <label class="field" id="pw2-wrap" hidden>Repeat password<input id="pw2" type="password" autocomplete="new-password" minlength="8"></label>
   <p class="order-err" id="err" role="alert"></p>
+  <p class="ok-msg" id="ok" role="status"></p>
   <div class="dlg-actions"><a href="/" class="btn-ghost">Back</a><button class="btn-primary" type="submit" id="submit">Log in</button></div>
   <p class="muted small-note">Play money only. Your account just remembers your demo portfolio and David's fund.</p>
 </form>
@@ -26,20 +28,40 @@ const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search), next = params.get("next");
 const target = next && next.startsWith("/") && !next.startsWith("//") ? next : "/";
 let mode = "login";
+const INTRO = {
+  login: "Log in to get your demo money and David Autopilot on any device.",
+  register: "Make a free account with your email. Your demo money and David's fund are saved to it.",
+  forgot: "Forgot your password? Enter your account's email and we'll send you a link to set a new one.",
+};
 function setMode(m) {
-  mode = m; $("err").textContent = "";
+  mode = m; $("err").textContent = ""; $("ok").textContent = "";
   document.querySelectorAll(".auth-tabs button").forEach((b) => b.classList.toggle("active", b.dataset.mode === m));
-  const reg = m === "register";
+  const reg = m === "register", forgot = m === "forgot";
   $("pw2-wrap").hidden = !reg; $("pw2").required = reg;
+  $("pw-wrap").hidden = forgot; $("pw").required = !forgot;
+  $("forgot-btn").hidden = m !== "login";
   $("pw").autocomplete = reg ? "new-password" : "current-password";
-  $("submit").textContent = reg ? "Create account" : "Log in";
-  $("intro").textContent = reg ? "Make a free account with your email. Your demo money and David's fund are saved to it." : "Log in to get your demo money and David Autopilot on any device.";
+  $("submit").textContent = reg ? "Create account" : forgot ? "Send reset link" : "Log in";
+  $("intro").textContent = INTRO[m];
+  if (forgot) $("email").focus();
 }
+$("forgot-btn").addEventListener("click", () => setMode("forgot"));
 document.querySelectorAll(".auth-tabs button").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
-if (params.get("mode") === "register") setMode("register");
+if (params.get("mode") === "register" || params.get("mode") === "forgot") setMode(params.get("mode"));
 $("login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  $("err").textContent = "";
+  $("err").textContent = ""; $("ok").textContent = "";
+  if (mode === "forgot") {
+    $("submit").disabled = true;
+    try {
+      const r = await fetch("/api/forgot", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: $("email").value }) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "Something went wrong");
+      $("ok").textContent = "If an account exists for " + $("email").value.trim() + ", we've sent it a reset link. Check your inbox and spam folder. The link works for 60 minutes.";
+    } catch (x) { $("err").textContent = x.message; }
+    finally { $("submit").disabled = false; }
+    return;
+  }
   if (mode === "register" && $("pw").value !== $("pw2").value) { $("err").textContent = "The two passwords don't match."; return; }
   $("submit").disabled = true;
   try {
