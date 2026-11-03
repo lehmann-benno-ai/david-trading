@@ -373,7 +373,7 @@ function renderUserArea(user) {
   const area = document.createElement("div");
   area.className = "user-area";
   if (!user) {
-    area.innerHTML = '<a class="btn-ghost login-link" href="/login.html">Log in / Sign up</a>';
+    area.innerHTML = '<a class="btn-ghost login-link" href="/login.html" aria-label="Log in / Sign up"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg><span>Log in / Sign up</span></a>';
   } else {
     area.innerHTML = `<a href="/david" class="ap-link"><span class="ap-dot" aria-hidden="true"></span>David Autopilot</a>
       <div class="user-menu"><button class="user-btn" id="user-btn" aria-haspopup="true" aria-expanded="false" title="${esc(user.email)}">${esc(user.email[0].toUpperCase())}</button>
